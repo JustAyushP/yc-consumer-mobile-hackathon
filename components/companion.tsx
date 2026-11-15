@@ -55,7 +55,7 @@ export function Notice({ title, body }: { title: string; body: string }) {
 }
 
 type ViewerApi = typeof api.game.viewer;
-type QueryName = "me" | "caseFile" | "board" | "story" | "team" | "timeline" | "reveal";
+type QueryName = "me" | "caseFile" | "board" | "story" | "team" | "timeline" | "reveal" | "history" | "hints";
 
 export function ViewerRead<N extends QueryName>({ query, children }: { query: N; children: (data: FunctionReturnType<ViewerApi[N]>) => ReactNode }) {
   const backendReady = useBackendReady();
@@ -69,7 +69,10 @@ function LiveViewerRead<N extends QueryName>({ query, children }: { query: N; ch
   const result = results.data as FunctionReturnType<ViewerApi[N]> | Error | undefined;
   if (!ready) return <View style={ui.loading}><ActivityIndicator color={colors.amber} /><Copy muted>Opening your case…</Copy></View>;
   if (!token) return <><Notice title="Your personal link is the key" body="Open the link from your iMessage or WhatsApp conversation to see your case. No login needed." /><Action title="Explore the demo preview" subtitle="A fictional sample, separate from your live case" onPress={() => router.push("/demo")} /></>;
-  if (result instanceof Error) return <Notice title="This case couldn't be opened" body="Your link may be invalid or expired. Reopen a fresh personal link from your messaging conversation. If it still fails, try again when your connection returns." />;
+  if (result instanceof Error) {
+    if ((query === "history" || query === "hints") && /could not find public function|function.*not found/i.test(result.message)) return <Notice title={query === "history" ? "Session history is not available yet" : "Your hint archive is not available yet"} body="This server hasn't received the companion update. The rest of your case is still available; no sample records are substituted." />;
+    return <Notice title="This case couldn't be opened" body="Your link may be invalid or expired. Reopen a fresh personal link from your messaging conversation. If it still fails, try again when your connection returns." />;
+  }
   if (result === undefined) return <View style={ui.loading}><ActivityIndicator color={colors.amber} /><Copy muted>Waiting for your case…</Copy><Text style={ui.small}>Check your connection if this takes a while.</Text></View>;
   return <View key={token} style={ui.content}>{children(result)}</View>;
 }

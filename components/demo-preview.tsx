@@ -67,7 +67,7 @@ const styles = StyleSheet.create({
   sheet: { backgroundColor: colors.surface, padding: 24, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "85%" },
   demoLabel: { alignSelf: "flex-start", borderWidth: 1, borderColor: "#5A4D39", borderRadius: 5, paddingVertical: 6, paddingHorizontal: 9, marginBottom: 20 },
   demoText: { color: colors.amber, fontFamily: fonts.body, fontSize: 10, lineHeight: 16 },
-  hero: { marginHorizontal: -22, marginTop: 23, aspectRatio: 1264 / 848 },
+  hero: { marginTop: 23, aspectRatio: 1264 / 848, overflow: "hidden", borderRadius: 12 },
   image: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", resizeMode: "cover" },
   chapter: { gap: 13, marginTop: 25 },
   map: { aspectRatio: 1264 / 848, backgroundColor: "#000000", borderRadius: 12, overflow: "hidden" },

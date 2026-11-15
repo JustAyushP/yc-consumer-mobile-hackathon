@@ -28,7 +28,7 @@ export default function World() {
 }
 
 const styles = StyleSheet.create({
-  scene: { marginHorizontal: -22, marginTop: 14, aspectRatio: 1264 / 848, backgroundColor: "#000000" },
+  scene: { marginTop: 14, aspectRatio: 1264 / 848, backgroundColor: "#000000", overflow: "hidden", borderRadius: 12 },
   art: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", resizeMode: "contain" },
   pin: { position: "absolute", width: 44, height: 44, marginLeft: -22, marginTop: -22, alignItems: "center", justifyContent: "center" },
   pinText: { backgroundColor: colors.paper, color: colors.ink, borderWidth: 2, borderColor: colors.bg, borderRadius: 16, width: 32, height: 32, textAlign: "center", lineHeight: 28, fontFamily: fonts.bodyBold, fontSize: 11 },
