@@ -8,9 +8,11 @@
     "scheme": "yc-consumer-mobile-hackathon",
     "userInterfaceStyle": "automatic",
     "ios": {
+      "bundleIdentifier": "com.justayushp.ychackathon",
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.justayushp.ychackathon",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
