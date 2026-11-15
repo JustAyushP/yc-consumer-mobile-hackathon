@@ -1,5 +1,6 @@
 import { useQueries } from "convex/react";
 import { FunctionReturnType } from "convex/server";
+import { router } from "expo-router";
 import { ReactNode } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -60,7 +61,7 @@ export function ViewerRead<N extends QueryName>({ query, children }: { query: N;
   const results = useQueries(token ? { data: { query: api.game.viewer[query], args: { viewerToken: token } } } : {});
   const result = results.data as FunctionReturnType<ViewerApi[N]> | Error | undefined;
   if (!ready) return <View style={ui.loading}><ActivityIndicator color={colors.amber} /><Copy muted>Opening your case…</Copy></View>;
-  if (!token) return <Notice title="Your personal link is the key" body="Open the link from your iMessage or WhatsApp conversation to see your case. No login needed." />;
+  if (!token) return <><Notice title="Your personal link is the key" body="Open the link from your iMessage or WhatsApp conversation to see your case. No login needed." /><Action title="Explore the demo preview" subtitle="A fictional sample, separate from your live case" onPress={() => router.push("/demo")} /></>;
   if (result instanceof Error) return <Notice title="This case couldn't be opened" body="Your link may be invalid or expired. Reopen a fresh personal link from your messaging conversation. If it still fails, try again when your connection returns." />;
   if (result === undefined) return <View style={ui.loading}><ActivityIndicator color={colors.amber} /><Copy muted>Waiting for your case…</Copy><Text style={ui.small}>Check your connection if this takes a while.</Text></View>;
   return <View key={token} style={ui.content}>{children(result)}</View>;
