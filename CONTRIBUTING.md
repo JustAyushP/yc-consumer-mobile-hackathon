@@ -30,7 +30,7 @@ Don't edit another lane's folders; ask its owner. Root config (`package.json`, `
 | app reads (public) | `game/viewer`: me, caseFile, board, story, team, timeline, reveal (each takes `viewerToken`) |
 | game (internal) | `game/viewer`: mintToken · `game/groups`: create, join, start · `game/survey`: questions, submit · `game/roles`: list, assign · `game/session`: today, submitAnswer, useAbility, complete · `game/accuse`: accuse · `game/engine`: unlockClue, recordInsight, giveHint, issueWarning, fastForwardDay, fastForwardByCode |
 | ravo (internal) | `ravo/entry`: onMessage, onAnswer, dailyCheck · `ravo/consult`: consult({ groupId, playerId?, messageId, lineId, agentKey? }) → `RavoDirective` · `ravo/casts`: assign (line 1 is the common character; lines 2 and 3 get a suspect, recorded in `casts`) · `ravo/llm`: complete (LLM wrapper with fallback) · `ravo/scoring`, `ravo/clues` (unfold), `ravo/hints` (request), `ravo/pace` (checkLag), `ravo/lateJoiner` (writeIn) |
-| chat (internal) | `chat/messages`: send (ingest from Keiki), list, get, postRavoMessage · `http.ts`: `POST /keiki/turn`, `POST /keiki/consult` (both still need signature verification) |
+| chat (internal) | `chat/messages`: send (ingest from Keiki), list, get, postRavoMessage · `http.ts`: `POST /keiki/turn`, `POST /keiki/consult` (both return 503 without side effects until Comms installs verified ingress) |
 | cases | `cases/velvetLantern.ts` (typed `SeedCase` data) · `cases/seed`: seed (internal, idempotent) |
 
 The bodies are minimal but working, so the whole loop runs end to end today. Each lane replaces its own bodies.
