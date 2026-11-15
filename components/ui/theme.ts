@@ -1,19 +1,19 @@
 export const colors = {
-  bg: "#0B0A0D",
-  surface: "#15131A",
-  surfaceRaised: "#1E1B24",
-  line: "#2A2630",
+  bg: "#101114",
+  surface: "#1C1E23",
+  surfaceRaised: "#402A37",
+  line: "#39363D",
   paper: "#E9DFC7",
   ink: "#1A1612",
-  text: "#EDE6D6",
-  muted: "#8A8291",
-  amber: "#E2A33B",
+  text: "#F2E9DA",
+  muted: "#B8B2A8",
+  amber: "#D5AE68",
   blood: "#B3261E",
   ravo: "#E2A33B",
 };
 
 export const fonts = {
-  display: "PlayfairDisplay_900Black",
+  display: "PlayfairDisplay_400Regular",
   displayItalic: "PlayfairDisplay_700Bold_Italic",
   typewriter: "SpecialElite_400Regular",
   body: "Inter_400Regular",

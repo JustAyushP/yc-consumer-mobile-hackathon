@@ -1,5 +1,5 @@
 import { Inter_400Regular, Inter_600SemiBold } from "@expo-google-fonts/inter";
-import { PlayfairDisplay_700Bold_Italic, PlayfairDisplay_900Black } from "@expo-google-fonts/playfair-display";
+import { PlayfairDisplay_400Regular, PlayfairDisplay_700Bold_Italic } from "@expo-google-fonts/playfair-display";
 import { SpecialElite_400Regular } from "@expo-google-fonts/special-elite";
 import { ConvexProvider, ConvexReactClient } from "convex/react";
 import { useFonts } from "expo-font";
@@ -18,13 +18,13 @@ const convex = new ConvexReactClient(url, { unsavedChangesWarning: false });
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const [loaded] = useFonts({ Inter_400Regular, Inter_600SemiBold, PlayfairDisplay_900Black, PlayfairDisplay_700Bold_Italic, SpecialElite_400Regular });
+  const [loaded, error] = useFonts({ Inter_400Regular, Inter_600SemiBold, PlayfairDisplay_400Regular, PlayfairDisplay_700Bold_Italic, SpecialElite_400Regular });
 
   useEffect(() => {
-    if (loaded) SplashScreen.hideAsync();
-  }, [loaded]);
+    if (loaded || error) SplashScreen.hideAsync();
+  }, [loaded, error]);
 
-  if (!loaded) return null;
+  if (!loaded && !error) return null;
   return (
     <ConvexProvider client={convex}>
       <ViewerProvider>
