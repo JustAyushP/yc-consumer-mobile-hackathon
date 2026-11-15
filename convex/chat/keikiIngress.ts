@@ -55,6 +55,10 @@ export const complete = internalMutation({
     if (!receipt || receipt.status !== "pending") throw new Error("Receipt is not pending");
     const [binding, message] = await Promise.all([ctx.db.get(receipt.bindingId), ctx.db.get(receipt.messageId)]);
     if (!binding?.active || !message || message.playerId !== binding.playerId || message.groupId !== binding.groupId || message.lineId !== binding.lineId || message.source !== "keiki" || message.agentKey !== "common") throw new Error("Invalid binding");
+    const bindings = await ctx.db.query("keikiBindings").withIndex("by_transport", (q) =>
+      q.eq("agentId", binding.agentId).eq("channel", binding.channel).eq("conversationId", binding.conversationId).eq("senderId", binding.senderId).eq("lineId", binding.lineId),
+    ).take(2);
+    if (bindings.length !== 1 || bindings[0]._id !== binding._id) throw new Error("Invalid binding");
     const [player, group] = await Promise.all([ctx.db.get(binding.playerId), ctx.db.get(binding.groupId)]);
     if (!player || !group || player.groupId !== group._id) throw new Error("Invalid binding");
     const scope: unknown = JSON.parse(receipt.eventKey);

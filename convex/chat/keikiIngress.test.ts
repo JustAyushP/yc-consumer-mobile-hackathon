@@ -163,8 +163,8 @@ describe("demo ingress with fake hosted transport and fake master", () => {
     expect(saved.scheduled).toHaveLength(0);
     expect(consult).toHaveBeenCalledExactlyOnceWith({ groupId, playerId, messageId: saved.messages[0]._id, lineId: "1", agentKey: "common" });
     const replay = await send(request(original));
-    expect(replay.status).toBe(200);
-    expect(await replay.json()).toEqual(directive);
+    expect(replay.status).toBe(409);
+    expect(await replay.text()).not.toContain(directive.guidance);
     expect(consult).toHaveBeenCalledTimes(1);
     expect((await state()).messages).toHaveLength(1);
   });
@@ -185,7 +185,7 @@ describe("demo ingress with fake hosted transport and fake master", () => {
     expect((await state()).messages).toHaveLength(1);
   });
 
-  it.each(["revoked", "rebound", "moved-player", "changed-channel", "changed-message"])("rejects completion when midturn binding is %s", async (mode) => {
+  it.each(["revoked", "rebound", "moved-player", "changed-channel", "changed-message", "duplicate-active", "duplicate-inactive"])("rejects completion when midturn binding is %s", async (mode) => {
     const { t, send, consult, state, bindingId, playerId, secondPlayerId, otherGroupId } = await setup();
     consult.mockImplementationOnce(async ({ messageId }) => {
       await t.run(async (ctx) => {
@@ -194,6 +194,10 @@ describe("demo ingress with fake hosted transport and fake master", () => {
         if (mode === "moved-player") await ctx.db.patch(playerId, { groupId: otherGroupId });
         if (mode === "changed-channel") await ctx.db.patch(bindingId, { channel: "whatsapp" });
         if (mode === "changed-message") await ctx.db.patch(messageId, { source: "app" });
+        if (mode === "duplicate-active" || mode === "duplicate-inactive") {
+          const { _id, _creationTime, ...binding } = (await ctx.db.get(bindingId))!;
+          await ctx.db.insert("keikiBindings", { ...binding, active: mode === "duplicate-active" });
+        }
       });
       return { character: { agentKey: "common", name: "Fixture actor" }, guidance: "Must not escape" };
     });
@@ -270,7 +274,7 @@ describe("demo ingress with fake hosted transport and fake master", () => {
 });
 
 describe("demo ingress with real deterministic internal RAVO consult", () => {
-  it("wires the real HTTP route through claim, master, completion, and cached replay", async () => {
+  it("wires the real HTTP route through claim, master, completion, and rejected replay", async () => {
     const { t, state } = await setup();
     vi.stubEnv("KEIKI_DEMO_INGRESS_ENABLED", "true");
     vi.stubEnv("KEIKI_TOOL_API_KEY", "fixture-tool-key");
@@ -283,14 +287,14 @@ describe("demo ingress with real deterministic internal RAVO consult", () => {
     const directive = await response.json();
     expect(directive).toMatchObject({ character: { agentKey: "common", name: "Sal, the night bartender" }, tone: "noir", progressDelta: 0 });
     const replay = await t.fetch("/keiki/consult?lineId=1", init);
-    expect(replay.status).toBe(200);
-    expect(await replay.json()).toEqual(directive);
+    expect(replay.status).toBe(409);
+    expect(await replay.text()).not.toContain(directive.guidance);
     expect((await state()).messages).toHaveLength(1);
     expect((await state()).receipts[0].status).toBe("completed");
   });
 
-  it("returns the master directive, records a deduction once, and replays without repeating effects", async () => {
-    const { t, send, deps, caseId, playerId, state } = await setup();
+  it.each(["unchanged", "case", "cast", "clue"])("returns the initial directive but refuses replay with %s entitlement, without repeating effects", async (mode) => {
+    const { t, send, deps, caseId, groupId, playerId, state } = await setup();
     await t.run(async (ctx) => {
       await ctx.db.insert("insights", { caseId, key: "proof", label: "Established deduction", weight: 1, keywords: [["proof"]], hint: "Inspect evidence" });
       await ctx.db.insert("clues", { caseId, key: "receipt", name: "Receipt", kind: "evidence", summary: "Allowed evidence", detail: "Unshared detail", unlock: { insight: "proof" } });
@@ -310,13 +314,24 @@ describe("demo ingress with real deterministic internal RAVO consult", () => {
     const directive = await first.json();
     expect(directive).toMatchObject({ character: { agentKey: "common", name: "Sal, the night bartender" }, reveal: { text: "Receipt: Allowed evidence" }, tone: "noir", progressDelta: 100 });
     expect(JSON.stringify(directive)).not.toContain("Unshared detail");
+    await t.run(async (ctx) => {
+      if (mode === "case") {
+        const replacement = await ctx.db.insert("cases", { key: "replacement", title: "Other", setting: "Other", victim: "Other", logline: "Other", culpritKey: "other", reveal: [] });
+        await ctx.db.patch(groupId, { caseId: replacement });
+      }
+      if (mode === "cast") await ctx.db.insert("casts", { groupId, playerId, lineId: "1", agentKey: "different-character" });
+      if (mode === "clue") {
+        const unlock = (await ctx.db.query("clueUnlocks").withIndex("by_group", (q) => q.eq("groupId", groupId)).first())!;
+        await ctx.db.delete(unlock._id);
+      }
+    });
     const second = await send(request({ ...payload, input: { ...payload.input, playerMessage: "proof" } }));
-    expect(second.status).toBe(200);
-    expect(await second.json()).toEqual(directive);
+    expect(second.status).toBe(409);
+    expect(await second.text()).not.toContain("Allowed evidence");
     const game = await t.run(async (ctx) => ({ progress: await ctx.db.query("progress").collect(), unlocks: await ctx.db.query("clueUnlocks").collect() }));
     expect(game.progress).toHaveLength(1);
     expect(game.progress[0].playerId).toBe(playerId);
-    expect(game.unlocks).toHaveLength(1);
+    expect(game.unlocks).toHaveLength(mode === "clue" ? 0 : 1);
     expect((await state()).receipts).toHaveLength(1);
     expect((await state()).scheduled).toHaveLength(0);
   });

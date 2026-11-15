@@ -127,7 +127,7 @@ export async function handleConsult(request: Request, config: DemoConfig, deps: 
   }
   if (claim.status === "rejected") return json({ error: "Unknown or invalid binding" }, 403);
   if (claim.status === "completed") {
-    return new Response(claim.directiveJson, { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+    return json({ error: "Completed trace requires current directive authorization; no automatic retry" }, 409);
   }
   if (claim.status !== "claimed") return json({ error: "Demo trace already claimed; no automatic retry" }, 409);
   try {
