@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { graph } from "./game/story/model";
 
 export const vRoleKey = v.union(v.literal("forensic"), v.literal("interrogator"), v.literal("profiler"), v.literal("archivist"));
 export const vGroupStatus = v.union(v.literal("lobby"), v.literal("active"), v.literal("solved"));
@@ -157,6 +158,8 @@ export default defineSchema({
     agentKey: v.optional(v.string()),
     lineId: v.optional(v.string()),
     answerId: v.optional(v.id("answers")),
+    intakeCaseId: v.optional(v.id("cases")),
+    intakeDay: v.optional(v.number()),
   })
     .index("by_group", ["groupId"])
     .index("by_player_agent", ["playerId", "agentKey"])
@@ -200,6 +203,39 @@ export default defineSchema({
     lastProgressDay: v.number(),
     lastStallDay: v.optional(v.number()),
   }).index("by_group", ["groupId"]),
+
+  storyInstances: defineTable({
+    groupId: v.id("groups"), caseId: v.id("cases"), graph, route: v.optional(v.string()),
+  }).index("by_group", ["groupId"]),
+
+  storyDecisions: defineTable({
+    groupId: v.id("groups"), key: v.string(), electorate: v.array(v.id("players")),
+    deadline: v.number(), votes: v.array(v.object({ playerId: v.id("players"), optionKey: v.string() })),
+    resolvedOption: v.optional(v.string()),
+  }).index("by_group_key", ["groupId", "key"]).index("by_group", ["groupId"]),
+
+  storyOperations: defineTable({
+    groupId: v.id("groups"), eventKey: v.string(), operation: v.string(), payload: v.string(), version: v.number(),
+  }).index("by_group_event", ["groupId", "eventKey"]),
+
+  commandReceipts: defineTable({
+    messageId: v.id("messages"), groupId: v.id("groups"), caseId: v.id("cases"), playerId: v.id("players"),
+    lineId: v.union(v.literal("1"), v.literal("2"), v.literal("3")), day: v.number(),
+    command: v.union(
+      v.object({ kind: v.literal("survey"), answers: v.array(v.object({ questionKey: v.string(), optionIndex: v.number() })) }),
+      v.object({ kind: v.literal("answer"), questionKey: v.string(), text: v.string() }),
+      v.object({ kind: v.literal("ability"), targetKey: v.string() }),
+      v.object({ kind: v.literal("hint"), insightKey: v.string() }),
+      v.object({ kind: v.literal("accusation"), suspectKey: v.string(), reasoning: v.string() }),
+    ),
+    result: v.union(
+      v.object({ kind: v.literal("survey"), value: v.null() }),
+      v.object({ kind: v.literal("answer"), value: v.id("answers") }),
+      v.object({ kind: v.literal("ability"), value: v.string() }),
+      v.object({ kind: v.literal("hint"), value: v.boolean() }),
+      v.object({ kind: v.literal("accusation"), value: v.object({ correct: v.boolean() }) }),
+    ),
+  }).index("by_message", ["messageId"]),
 
   storyEvents: defineTable({
     groupId: v.id("groups"),
