@@ -68,7 +68,7 @@ function LiveViewerRead<N extends QueryName>({ query, children }: { query: N; ch
   const results = useQueries(token ? { data: { query: api.game.viewer[query], args: { viewerToken: token } } } : {});
   const result = results.data as FunctionReturnType<ViewerApi[N]> | Error | undefined;
   if (!ready) return <View style={ui.loading}><ActivityIndicator color={colors.amber} /><Copy muted>Opening your case…</Copy></View>;
-  if (!token) return <><Notice title="Your personal link is the key" body="Open the link from your iMessage or WhatsApp conversation to see your case. No login needed." /><Action title="Explore the demo preview" subtitle="A fictional sample, separate from your live case" onPress={() => router.push("/demo")} /></>;
+  if (!token) return <><Notice title="Your personal link is the key" body="Open the personal link from your messaging conversation to see your case. No login needed." /><Action title="Explore the demo preview" subtitle="A fictional sample, separate from your live case" onPress={() => router.push("/demo")} /></>;
   if (result instanceof Error) {
     if ((query === "history" || query === "hints") && /could not find public function|function.*not found/i.test(result.message)) return <Notice title={query === "history" ? "Session history is not available yet" : "Your hint archive is not available yet"} body="This server hasn't received the companion update. The rest of your case is still available; no sample records are substituted." />;
     return <Notice title="This case couldn't be opened" body="Your link may be invalid or expired. Reopen a fresh personal link from your messaging conversation. If it still fails, try again when your connection returns." />;
