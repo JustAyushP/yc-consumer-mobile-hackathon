@@ -10,6 +10,8 @@
 
 import type * as cases_seed from "../cases/seed.js";
 import type * as cases_velvetLantern from "../cases/velvetLantern.js";
+import type * as chat_keikiHandler from "../chat/keikiHandler.js";
+import type * as chat_keikiIngress from "../chat/keikiIngress.js";
 import type * as chat_messages from "../chat/messages.js";
 import type * as crons from "../crons.js";
 import type * as game_accuse from "../game/accuse.js";
@@ -25,6 +27,9 @@ import type * as http from "../http.js";
 import type * as ravo_casts from "../ravo/casts.js";
 import type * as ravo_clues from "../ravo/clues.js";
 import type * as ravo_consult from "../ravo/consult.js";
+import type * as ravo_director_casting from "../ravo/director/casting.js";
+import type * as ravo_director_context from "../ravo/director/context.js";
+import type * as ravo_director_story from "../ravo/director/story.js";
 import type * as ravo_entry from "../ravo/entry.js";
 import type * as ravo_hints from "../ravo/hints.js";
 import type * as ravo_lateJoiner from "../ravo/lateJoiner.js";
@@ -43,6 +48,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   "cases/seed": typeof cases_seed;
   "cases/velvetLantern": typeof cases_velvetLantern;
+  "chat/keikiHandler": typeof chat_keikiHandler;
+  "chat/keikiIngress": typeof chat_keikiIngress;
   "chat/messages": typeof chat_messages;
   crons: typeof crons;
   "game/accuse": typeof game_accuse;
@@ -58,6 +65,9 @@ declare const fullApi: ApiFromModules<{
   "ravo/casts": typeof ravo_casts;
   "ravo/clues": typeof ravo_clues;
   "ravo/consult": typeof ravo_consult;
+  "ravo/director/casting": typeof ravo_director_casting;
+  "ravo/director/context": typeof ravo_director_context;
+  "ravo/director/story": typeof ravo_director_story;
   "ravo/entry": typeof ravo_entry;
   "ravo/hints": typeof ravo_hints;
   "ravo/lateJoiner": typeof ravo_lateJoiner;
