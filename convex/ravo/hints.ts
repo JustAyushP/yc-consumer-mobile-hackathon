@@ -2,13 +2,15 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
 import { hintsLeft, loadPlayer } from "../game/lib";
+import { currentGroup } from "../game/engine";
 
 /** A player asks RAVO for a hint. Max 3 per group per week, enforced by game.engine.giveHint. */
 export const request = internalMutation({
   args: { playerId: v.id("players") },
   returns: v.object({ given: v.boolean(), hintsLeft: v.number() }),
   handler: async (ctx, { playerId }): Promise<{ given: boolean; hintsLeft: number }> => {
-    const { group } = await loadPlayer(ctx, playerId);
+    const { group: loadedGroup } = await loadPlayer(ctx, playerId);
+    const group = await currentGroup(ctx, loadedGroup);
     if (group.status !== "active") throw new Error("The case isn't open");
     const left = await hintsLeft(ctx, group);
     if (left <= 0) return { given: false, hintsLeft: 0 };

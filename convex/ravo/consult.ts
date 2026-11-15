@@ -42,10 +42,14 @@ export const consult = internalAction({
     agentKey: v.optional(v.string()),
   },
   returns: vRavoDirective,
-  handler: async (ctx, { groupId, playerId, messageId, lineId }): Promise<RavoDirective> => {
+  handler: async (ctx, { groupId, playerId, messageId, lineId, agentKey }): Promise<RavoDirective> => {
     const message = await ctx.runQuery(internal.chat.messages.get, { messageId });
+    if (!message || message.groupId !== groupId || !["1", "2", "3"].includes(lineId) || (message.lineId !== undefined && message.lineId !== lineId)) throw new Error("Invalid conversation");
     const who = playerId ?? message?.playerId;
-    const character = who ? await ctx.runMutation(internal.ravo.casts.assign, { playerId: who, lineId }) : { agentKey: "common", name: "Sal, the night bartender" };
+    if (!who || message.playerId !== who) throw new Error("Invalid conversation");
+    const player = await ctx.runQuery(internal.ravo.entry.player, { playerId: who });
+    if (!player || player.groupId !== groupId) throw new Error("Invalid conversation");
+    const character = await ctx.runMutation(internal.ravo.casts.assignForConsult, { playerId: who, lineId, agentKey });
     const { group, insights, found } = await ctx.runQuery(internal.ravo.scoring.context, { groupId });
     if (!message || group.status !== "active") return { character, guidance: "The case isn't open. Stay in character and wait.", endTurn: true };
     const before = group.progress;
