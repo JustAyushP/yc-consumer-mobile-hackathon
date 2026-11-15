@@ -77,12 +77,13 @@ export const board = query({
 export const story = query({
   args: { viewerToken: v.string() },
   handler: async (ctx, { viewerToken }) => {
-    const { group } = await requireViewer(ctx, viewerToken);
+    const { player, group } = await requireViewer(ctx, viewerToken);
     const rows = await ctx.db.query("messages").withIndex("by_group", (q) => q.eq("groupId", group._id)).order("desc").take(300);
-    return rows
-      .filter((m) => (NARRATION as readonly string[]).includes(m.kind) && !m.agentKey)
-      .reverse()
-      .map((m) => ({ _id: m._id, kind: m.kind, body: m.body, at: m._creationTime }));
+    const narration = await ctx.db.query("narration").withIndex("by_group", (q) => q.eq("groupId", group._id)).order("desc").take(300);
+    return [...rows.filter((m) => (NARRATION as readonly string[]).includes(m.kind) && !m.agentKey && (m.kind === "intro" || !m.playerId || m.playerId === player._id)),
+      ...narration.filter((m) => !m.playerId || m.playerId === player._id)]
+      .map((m) => ({ _id: m._id, kind: m.kind, body: m.body, at: m._creationTime }))
+      .sort((a, b) => a.at - b.at).slice(-300);
   },
 });
 
@@ -90,7 +91,7 @@ export const story = query({
 export const team = query({
   args: { viewerToken: v.string() },
   handler: async (ctx, { viewerToken }) => {
-    const { group } = await requireViewer(ctx, viewerToken);
+    const { player, group } = await requireViewer(ctx, viewerToken);
     const players = await groupPlayers(ctx, group._id);
     const warnings = await ctx.db.query("warnings").withIndex("by_group", (q) => q.eq("groupId", group._id)).collect();
     const today = await ctx.db.query("sessions").withIndex("by_group_day", (q) => q.eq("groupId", group._id).eq("day", group.day)).collect();
@@ -99,6 +100,8 @@ export const team = query({
       progress: group.progress,
       hintsLeft: await hintsLeft(ctx, group),
       detectives: players.map((p) => ({
+        id: p._id,
+        isMe: p._id === player._id,
         name: p.name,
         roleTitle: p.roleKey ? ROLES[p.roleKey].title : null,
         lateJoiner: p.lateJoiner,
@@ -107,6 +110,28 @@ export const team = query({
         missedDays: warnings.filter((w) => w.playerId === p._id && w.kind === "missed").map((w) => w.day),
       })),
     };
+  },
+});
+
+export const history = query({
+  args: { viewerToken: v.string() },
+  handler: async (ctx, { viewerToken }) => {
+    const { player, group } = await requireViewer(ctx, viewerToken);
+    const sessions = await ctx.db.query("sessions").withIndex("by_player_day", (q) => q.eq("playerId", player._id)).collect();
+    const warnings = await ctx.db.query("warnings").withIndex("by_player", (q) => q.eq("playerId", player._id)).collect();
+    const missed = new Set(warnings.filter((w) => w.groupId === group._id && w.kind === "missed").map((w) => w.day));
+    const history = sessions.filter((s) => s.groupId === group._id).map((s) => ({ day: s.day, completed: s.completed, status: s.completed ? "completed" : (s.status === "missed" || missed.has(s.day) ? "missed" : "open") }));
+    for (const day of missed) if (!history.some((s) => s.day === day)) history.push({ day, completed: false, status: "missed" });
+    return history.sort((a, b) => a.day - b.day);
+  },
+});
+
+export const hints = query({
+  args: { viewerToken: v.string() },
+  handler: async (ctx, { viewerToken }) => {
+    const { player, group } = await requireViewer(ctx, viewerToken);
+    const rows = await ctx.db.query("hints").withIndex("by_group_week", (q) => q.eq("groupId", group._id)).collect();
+    return rows.filter((h) => h.playerId === player._id).map((h) => ({ day: h.day, week: h.week, body: h.body }));
   },
 });
 

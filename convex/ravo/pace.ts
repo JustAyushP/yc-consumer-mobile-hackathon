@@ -2,14 +2,16 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
 import { groupPlayers } from "../game/lib";
+import { currentGroup } from "../game/engine";
 
 /** Once half the team has filed today's session, warn everyone who hasn't. */
 export const checkLag = internalMutation({
   args: { groupId: v.id("groups") },
   returns: v.number(),
   handler: async (ctx, { groupId }) => {
-    const group = await ctx.db.get(groupId);
+    let group = await ctx.db.get(groupId);
     if (!group || group.status !== "active") return 0;
+    group = await currentGroup(ctx, group);
     const players = (await groupPlayers(ctx, groupId)).filter((p) => p.roleKey && p.joinedDay <= group.day);
     const done = new Set(
       (await ctx.db.query("sessions").withIndex("by_group_day", (q) => q.eq("groupId", groupId).eq("day", group.day)).collect())

@@ -93,13 +93,15 @@ export default defineSchema({
     caseId: v.id("cases"),
     status: vGroupStatus,
     day: v.number(),
+    dayOpenedAt: v.optional(v.number()),
+    gameTimeOffsetMs: v.optional(v.number()),
     hostId: v.optional(v.id("players")),
     progress: v.number(),
     wrongAccusations: v.number(),
     solvedBy: v.optional(v.id("players")),
     solvedDay: v.optional(v.number()),
     ravoThreadId: v.optional(v.string()),
-  }).index("by_joinCode", ["joinCode"]),
+  }).index("by_joinCode", ["joinCode"]).index("by_status", ["status"]),
 
   players: defineTable({
     groupId: v.id("groups"),
@@ -125,6 +127,7 @@ export default defineSchema({
     playerId: v.id("players"),
     day: v.number(),
     completed: v.boolean(),
+    status: v.optional(v.union(v.literal("open"), v.literal("completed"), v.literal("missed"))),
     abilityTarget: v.optional(v.string()),
     abilityResult: v.optional(v.string()),
   })
@@ -152,6 +155,7 @@ export default defineSchema({
     meta: v.optional(v.string()),
     externalId: v.optional(v.string()),
     agentKey: v.optional(v.string()),
+    lineId: v.optional(v.string()),
   })
     .index("by_group", ["groupId"])
     .index("by_player_agent", ["playerId", "agentKey"])
@@ -192,6 +196,33 @@ export default defineSchema({
     groupId: v.id("groups"),
     expiresAt: v.number(),
   }).index("by_token", ["token"]),
+
+  keikiBindings: defineTable({
+    agentId: v.string(),
+    channel: v.string(),
+    conversationId: v.string(),
+    senderId: v.string(),
+    lineId: v.string(),
+    playerId: v.id("players"),
+    groupId: v.id("groups"),
+    active: v.boolean(),
+  }).index("by_transport", ["agentId", "channel", "conversationId", "senderId", "lineId"]),
+
+  keikiReceipts: defineTable({
+    eventKey: v.string(),
+    status: v.union(v.literal("pending"), v.literal("completed"), v.literal("uncertain")),
+    messageId: v.id("messages"),
+    bindingId: v.id("keikiBindings"),
+    directiveJson: v.optional(v.string()),
+    failureCode: v.optional(v.string()),
+  }).index("by_eventKey", ["eventKey"]),
+
+  narration: defineTable({
+    groupId: v.id("groups"),
+    playerId: v.optional(v.id("players")),
+    kind: vMessageKind,
+    body: v.string(),
+  }).index("by_group", ["groupId"]),
 
   warnings: defineTable({
     groupId: v.id("groups"),

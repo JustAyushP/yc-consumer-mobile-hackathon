@@ -14,7 +14,9 @@ export async function loadPlayer(ctx: QueryCtx, playerId: Id<"players">) {
 export async function requireViewer(ctx: QueryCtx, viewerToken: string) {
   const row = await ctx.db.query("viewerTokens").withIndex("by_token", (q) => q.eq("token", viewerToken)).first();
   if (!row || row.expiresAt < Date.now()) throw new Error("This link has expired. Text RAVO for a new one.");
-  return await loadPlayer(ctx, row.playerId);
+  const viewer = await loadPlayer(ctx, row.playerId);
+  if (viewer.group._id !== row.groupId) throw new Error("Invalid viewer link");
+  return viewer;
 }
 
 export async function groupPlayers(ctx: QueryCtx, groupId: Id<"groups">) {

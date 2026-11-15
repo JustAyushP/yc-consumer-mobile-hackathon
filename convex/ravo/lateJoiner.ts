@@ -15,7 +15,7 @@ export const writeIn = internalAction({
       prompt: `A detective named ${p.name} joins the case late as the team's ${p.roleKey}. Write a three-sentence noir intro that writes them into the story and tells the team to catch them up.`,
       fallback,
     });
-    await ctx.runMutation(internal.chat.messages.postRavoMessage, { groupId: p.groupId, kind: "intro", body: text, playerId });
+    await ctx.runMutation(internal.game.engine.addNarration, { groupId: p.groupId, kind: "intro", body: text });
     return null;
   },
 });
