@@ -10,7 +10,10 @@ type Effect = Infer<typeof effect>;
 
 function validateGraph(input: Graph, insightKeys: Set<string>, clueKeys: Set<string>, initialFlags: Record<string, boolean>) {
   const validKey = (key: string) => /^[a-zA-Z0-9_-]{1,80}$/.test(key) && !["__proto__", "prototype", "constructor"].includes(key);
-  if (!validKey(input.caseKey) || input.beats.length > 100 || input.decisions.length > 100) throw new Error("Invalid graph");
+  const validLabel = (label: string) => label.trim().length > 0 && label.length <= 160;
+  const routes = new Set(input.routes.map((route) => route.key));
+  if (!validKey(input.caseKey) || input.beats.length > 100 || input.decisions.length > 100 || input.routes.length > 100 ||
+    routes.size !== input.routes.length || input.routes.some((route) => !validKey(route.key) || !validLabel(route.publicLabel))) throw new Error("Invalid graph");
   const possibleFlags = [...input.beats.flatMap((beat) => beat.effects), ...input.decisions.flatMap((decision) => decision.options.flatMap((option) => option.effects))]
     .filter((item): item is Extract<Effect, { kind: "flag" }> => item.kind === "flag");
   const beats = new Set<string>();
@@ -27,10 +30,11 @@ function validateGraph(input: Graph, insightKeys: Set<string>, clueKeys: Set<str
   const decisions = new Set<string>();
   for (const decision of input.decisions) {
     const options = new Set(decision.options.map((option) => option.key));
-    if (!validKey(decision.key) || decisions.has(decision.key) || !beats.has(decision.requiredBeat) ||
+    if (!validKey(decision.key) || !validLabel(decision.publicLabel) || decisions.has(decision.key) || !beats.has(decision.requiredBeat) ||
       !Number.isSafeInteger(decision.durationMs) || decision.durationMs < 1 || decision.durationMs > 30 * 86400000 ||
       decision.options.length < 2 || decision.options.length > 20 || options.size !== decision.options.length ||
-      !options.has(decision.tieOption) || !options.has(decision.defaultOption) || [...options].some((key) => !validKey(key))) throw new Error("Invalid decision");
+      !options.has(decision.tieOption) || !options.has(decision.defaultOption) || [...options].some((key) => !validKey(key)) ||
+      decision.options.some((option) => !validLabel(option.publicLabel))) throw new Error("Invalid decision");
     for (const option of decision.options) validateEffects(option.effects);
     decisions.add(decision.key);
   }
@@ -53,7 +57,7 @@ function validateGraph(input: Graph, insightKeys: Set<string>, clueKeys: Set<str
   }
   if (reachable.size !== input.beats.length) throw new Error("Unreachable beat prerequisites");
   function validateEffects(effects: Effect[]) {
-    if (effects.length > 20 || effects.some((item) => !validKey(item.key))) throw new Error("Invalid effects");
+    if (effects.length > 20 || effects.some((item) => !validKey(item.key) || (item.kind === "route" && !routes.has(item.key)))) throw new Error("Invalid effects");
   }
 }
 
@@ -246,9 +250,31 @@ export const snapshot = internalQuery({
       ctx.db.query("storyDecisions").withIndex("by_group", (q) => q.eq("groupId", groupId)).take(101),
     ]);
     if (!group || group.status !== "active" || !player || player.groupId !== groupId || !instance || instance.caseId !== group.caseId || !state) throw new Error("Invalid story audience");
-    return { version: state.version, act: state.act, route: instance.route,
-      decisions: decisions.map((decision) => ({ id: decision._id, key: decision.key, deadline: decision.deadline, resolvedOption: decision.resolvedOption,
-        options: instance.graph.decisions.find((item) => item.key === decision.key)?.options.map((item) => item.key) ?? [],
-        eligible: decision.electorate.includes(playerId), voted: decision.votes.some((vote) => vote.playerId === playerId) })) };
+    const route = instance.graph.routes.find((item) => item.key === instance.route)?.publicLabel;
+    return { version: state.version, act: state.act, route,
+      decisions: decisions.map((decision) => {
+        const definition = instance.graph.decisions.find((item) => item.key === decision.key);
+        if (!definition) throw new Error("Invalid decision");
+        const resolvedIndex = decision.resolvedOption === undefined ? undefined : definition.options.findIndex((item) => item.key === decision.resolvedOption);
+        if (resolvedIndex === -1) throw new Error("Invalid decision outcome");
+        return { id: decision._id, label: definition.publicLabel, deadline: decision.deadline, resolvedIndex,
+          options: definition.options.map((item, index) => ({ index, label: item.publicLabel })),
+          eligible: decision.electorate.includes(playerId), voted: decision.votes.some((vote) => vote.playerId === playerId) };
+      }) };
+  },
+});
+
+export const optionKeyForIndex = internalQuery({
+  args: { groupId: v.id("groups"), decisionId: v.id("storyDecisions"), playerId: v.id("players"), optionIndex: v.number() },
+  handler: async (ctx, { groupId, decisionId, playerId, optionIndex }) => {
+    const [group, player, decision, instance] = await Promise.all([
+      ctx.db.get(groupId), ctx.db.get(playerId), ctx.db.get(decisionId),
+      ctx.db.query("storyInstances").withIndex("by_group", (q) => q.eq("groupId", groupId)).unique(),
+    ]);
+    if (!group || group.status !== "active" || !player || player.groupId !== groupId || !decision || decision.groupId !== groupId ||
+      !decision.electorate.includes(playerId) || !instance || instance.caseId !== group.caseId || !Number.isSafeInteger(optionIndex)) throw new Error("Invalid decision audience");
+    const option = instance.graph.decisions.find((item) => item.key === decision.key)?.options[optionIndex];
+    if (!option) throw new Error("Invalid option");
+    return option.key;
   },
 });

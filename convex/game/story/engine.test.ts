@@ -15,22 +15,27 @@ const resolveDeadline = makeFunctionReference<"mutation">("game/story/engine:res
 const snapshot = makeFunctionReference<"query">("game/story/engine:snapshot");
 const processConsult = makeFunctionReference<"mutation">("game/runtime:processConsult");
 const planNext = makeFunctionReference<"mutation">("game/story/engine:planNext");
+const optionKeyForIndex = makeFunctionReference<"query">("game/story/engine:optionKeyForIndex");
 
 const fixtureGraph: Infer<typeof graph> = {
   caseKey: "fixture",
+  routes: [
+    { key: "left-route", publicLabel: "Left route" }, { key: "right-route", publicLabel: "Right route" },
+    { key: "ending-a", publicLabel: "Ending A" }, { key: "ending-b", publicLabel: "Ending B" },
+  ],
   beats: [
     { key: "start", act: 1, requiredBeats: [], requiredInsights: ["insight"], requiredClues: ["clue"], requiredFlags: {}, forceAtDay: 1, minDay: 5, effects: [] },
     { key: "left", act: 2, requiredBeats: ["start"], requiredInsights: [], requiredClues: [], requiredFlags: { left: true }, effects: [] },
     { key: "right", act: 2, requiredBeats: ["start"], requiredInsights: [], requiredClues: [], requiredFlags: { left: false }, effects: [] },
   ],
   decisions: [
-    { key: "first", requiredBeat: "start", durationMs: 1000, tieOption: "right", defaultOption: "left", options: [
-      { key: "left", effects: [{ kind: "flag" as const, key: "left", value: true }, { kind: "route" as const, key: "left-route" }] },
-      { key: "right", effects: [{ kind: "flag" as const, key: "left", value: false }, { kind: "route" as const, key: "right-route" }] },
+    { key: "first", publicLabel: "First choice", requiredBeat: "start", durationMs: 1000, tieOption: "right", defaultOption: "left", options: [
+      { key: "left", publicLabel: "Choose left", effects: [{ kind: "flag" as const, key: "left", value: true }, { kind: "route" as const, key: "left-route" }] },
+      { key: "right", publicLabel: "Choose right", effects: [{ kind: "flag" as const, key: "left", value: false }, { kind: "route" as const, key: "right-route" }] },
     ] },
-    { key: "second", requiredBeat: "start", durationMs: 1000, tieOption: "b", defaultOption: "a", options: [
-      { key: "a", effects: [{ kind: "route" as const, key: "ending-a" }] },
-      { key: "b", effects: [{ kind: "route" as const, key: "ending-b" }] },
+    { key: "second", publicLabel: "Second choice", requiredBeat: "start", durationMs: 1000, tieOption: "b", defaultOption: "a", options: [
+      { key: "a", publicLabel: "Choose A", effects: [{ kind: "route" as const, key: "ending-a" }] },
+      { key: "b", publicLabel: "Choose B", effects: [{ kind: "route" as const, key: "ending-b" }] },
     ] },
   ],
 };
@@ -91,7 +96,7 @@ it("enforces authored gates, validates references and applies an atomic beat onl
   const freshGroup = await t.run(async (ctx) => ctx.db.insert("groups", { name: "Fresh", joinCode: "FRESH", caseId, status: "active", day: 1, progress: 0, wrongAccusations: 0 }));
   await expect(t.mutation(initialize, { groupId: freshGroup, graph: { ...fixtureGraph, beats: [{ ...fixtureGraph.beats[0], requiredClues: ["missing"] }] } })).rejects.toThrow("prerequisite");
   await expect(t.mutation(initialize, { groupId: freshGroup, graph: { ...fixtureGraph, beats: [{ ...fixtureGraph.beats[0], requiredFlags: { never_written: true } }] } })).rejects.toThrow("prerequisite");
-  await expect(t.mutation(initialize, { groupId: freshGroup, graph: { caseKey: "fixture", decisions: [], beats: [{ ...fixtureGraph.beats[0], requiredFlags: { cycle: true }, effects: [{ kind: "flag", key: "cycle", value: true }] }] } })).rejects.toThrow("Unreachable");
+  await expect(t.mutation(initialize, { groupId: freshGroup, graph: { caseKey: "fixture", routes: [], decisions: [], beats: [{ ...fixtureGraph.beats[0], requiredFlags: { cycle: true }, effects: [{ kind: "flag", key: "cycle", value: true }] }] } })).rejects.toThrow("Unreachable");
   await expect(t.mutation(initialize, { groupId: freshGroup, graph: { ...fixtureGraph, beats: [{ ...fixtureGraph.beats[0], effects: [{ kind: "unlockClue", clueKey: "clue" }] }] } })).rejects.toThrow();
   const rows = await t.run(async (ctx) => ({ states: await ctx.db.query("storyStates").collect(), events: await ctx.db.query("storyOperations").collect() }));
   expect(rows.states[0].doneBeats).toEqual(["start"]);
@@ -118,7 +123,7 @@ it.each(["left", "right"] as const)("produces a shared %s branch through two dec
   const second = (await t.query(snapshot, { groupId, playerId: players[0] })).decisions[1].id;
   for (const [index, playerId] of players.entries()) version = await t.mutation(vote, { groupId, decisionId: second, playerId, optionKey: choice === "left" ? "a" : "b", eventKey: `s${index}`, expectedVersion: version });
   const views = await Promise.all(players.map((playerId) => t.query(snapshot, { groupId, playerId })));
-  expect(views.map((view) => view.route)).toEqual(Array(3).fill(choice === "left" ? "ending-a" : "ending-b"));
+  expect(views.map((view) => view.route)).toEqual(Array(3).fill(choice === "left" ? "Ending A" : "Ending B"));
   const story = await t.run(async (ctx) => ctx.db.query("storyStates").withIndex("by_group", (q) => q.eq("groupId", groupId)).unique());
   expect(story?.doneBeats).toEqual(["start", choice]);
   expect(JSON.stringify(views)).not.toMatch(/PRIVATE|fixed|culprit|insight|clue/);
@@ -140,13 +145,13 @@ it("uses authored tie and no-vote defaults at the logical deadline and rejects l
   await t.run(async (ctx) => ctx.db.patch(groupId, { gameTimeOffsetMs: 1000 }));
   await expect(t.mutation(vote, { groupId, decisionId: first, playerId: players[2], optionKey: "left", eventKey: "late", expectedVersion: version })).rejects.toThrow("closed");
   version = await t.mutation(resolveDeadline, { groupId, decisionId: first, eventKey: "resolve1", expectedVersion: version });
-  expect((await t.query(snapshot, { groupId, playerId: players[0] })).route).toBe("right-route");
+  expect((await t.query(snapshot, { groupId, playerId: players[0] })).route).toBe("Right route");
   version = await t.mutation(openDecision, { groupId, decisionKey: "second", eventKey: "open2", expectedVersion: version });
   const second = (await t.query(snapshot, { groupId, playerId: players[0] })).decisions[1].id;
   await t.run(async (ctx) => ctx.db.patch(groupId, { gameTimeOffsetMs: 2000 }));
   const args = { groupId, decisionId: second, eventKey: "resolve2", expectedVersion: version };
   expect(await Promise.all([t.mutation(resolveDeadline, args), t.mutation(resolveDeadline, args)])).toEqual([version + 1, version + 1]);
-  expect((await t.query(snapshot, { groupId, playerId: players[0] })).route).toBe("ending-a");
+  expect((await t.query(snapshot, { groupId, playerId: players[0] })).route).toBe("Ending A");
 });
 
 it("freezes the electorate and rejects conflicting concurrent versions", async () => {
@@ -189,7 +194,7 @@ it("shares the version and preserves story state across real runtime consults", 
   const state = await t.run(async (ctx) => ctx.db.query("storyStates").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect());
   expect(state).toHaveLength(1);
   expect(state[0]).toMatchObject({ version: version + 1, act: 1, doneBeats: ["start"], flags: { left: true } });
-  expect((await t.query(snapshot, { groupId, playerId: players[0] })).route).toBe("left-route");
+  expect((await t.query(snapshot, { groupId, playerId: players[0] })).route).toBe("Left route");
 });
 
 it("uses director order and rolls the logical day before checking a beat", async () => {
@@ -214,4 +219,31 @@ it("does not expose existing private runtime flags or beat identifiers", async (
     await ctx.db.patch(state!._id, { flags: { PRIVATE_FLAG: true }, doneBeats: ["PRIVATE_BEAT"] });
   });
   expect(JSON.stringify(await t.query(snapshot, { groupId, playerId: players[1] }))).not.toMatch(/PRIVATE/);
+});
+
+it("returns authored public labels and opaque indices instead of private graph identifiers", async () => {
+  const first = fixtureGraph.decisions[0];
+  const privateGraph: Infer<typeof graph> = { ...fixtureGraph,
+    routes: [{ key: "SPOILER_ROUTE", publicLabel: "Route one" }],
+    decisions: [{ ...first, key: "SPOILER_DECISION", tieOption: "SPOILER_OPTION", defaultOption: "SPOILER_OPTION", options: [
+      { key: "SPOILER_OPTION", publicLabel: "Option one", effects: [{ kind: "route", key: "SPOILER_ROUTE" }] },
+      { key: "OTHER_SECRET", publicLabel: "Option two", effects: [] },
+    ] }],
+    beats: [fixtureGraph.beats[0]],
+  };
+  const { t, groupId, players, outsider } = await fixture(privateGraph);
+  await earn(t, groupId);
+  let version = await t.mutation(transition, { groupId, beatKey: "start", eventKey: "start", expectedVersion: 0 });
+  version = await t.mutation(openDecision, { groupId, decisionKey: "SPOILER_DECISION", eventKey: "open", expectedVersion: version });
+  const view = await t.query(snapshot, { groupId, playerId: players[0] });
+  const decisionId = view.decisions[0].id;
+  expect(view.decisions[0].options).toEqual([{ index: 0, label: "Option one" }, { index: 1, label: "Option two" }]);
+  expect(await t.query(optionKeyForIndex, { groupId, decisionId, playerId: players[0], optionIndex: 0 })).toBe("SPOILER_OPTION");
+  await expect(t.query(optionKeyForIndex, { groupId, decisionId, playerId: outsider, optionIndex: 0 })).rejects.toThrow();
+  await expect(t.query(optionKeyForIndex, { groupId, decisionId, playerId: players[0], optionIndex: 9 })).rejects.toThrow();
+  for (const [index, playerId] of players.entries()) version = await t.mutation(vote, { groupId, decisionId, playerId, optionKey: "SPOILER_OPTION", eventKey: `vote-${index}`, expectedVersion: version });
+  const resolved = await t.query(snapshot, { groupId, playerId: players[1] });
+  expect(resolved.route).toBe("Route one");
+  expect(resolved.decisions[0].resolvedIndex).toBe(0);
+  expect(JSON.stringify([view, resolved])).not.toMatch(/SPOILER|OTHER_SECRET/);
 });
