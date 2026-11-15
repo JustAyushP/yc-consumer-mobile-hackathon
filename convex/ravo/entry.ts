@@ -3,6 +3,7 @@ import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { ActionCtx, internalAction, internalMutation, internalQuery } from "../_generated/server";
 import { matchInsights } from "./scoring";
+import { rolloverDue } from "../game/engine";
 
 // RAVO's entry points. Other lanes call these (through internal.ravo.entry.*), never RAVO's internals.
 
@@ -21,7 +22,7 @@ export const onMessage = internalAction({
   returns: v.null(),
   handler: async (ctx, { groupId, messageId }) => {
     const message = await ctx.runQuery(internal.chat.messages.get, { messageId });
-    if (!message || message.kind !== "chat") return null;
+    if (!message || message.groupId !== groupId || message.kind !== "chat") return null;
     const { group, insights, found } = await ctx.runQuery(internal.ravo.scoring.context, { groupId });
     if (group.status !== "active") return null;
     const hits = matchInsights(insights, message.body).filter((k) => !found.includes(k));
@@ -63,13 +64,35 @@ export const onAnswer = internalAction({
   },
 });
 
-/** Daily cron: runs the lag check for every active group. Missed-day marks are issued when a day closes (game.engine.fastForwardDay). */
 export const dailyCheck = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
-    for (const g of await ctx.db.query("groups").collect()) {
-      if (g.status === "active") await ctx.scheduler.runAfter(0, internal.ravo.pace.checkLag, { groupId: g._id });
+    await ctx.scheduler.runAfter(0, internal.ravo.entry.rolloverBatch, { cursor: null });
+    return null;
+  },
+});
+
+export const rolloverBatch = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  returns: v.null(),
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query("groups").withIndex("by_status", (q) => q.eq("status", "active")).paginate({ cursor, numItems: 50 });
+    for (const group of page.page) await ctx.scheduler.runAfter(0, internal.ravo.entry.rolloverGroup, { groupId: group._id });
+    if (!page.isDone) await ctx.scheduler.runAfter(0, internal.ravo.entry.rolloverBatch, { cursor: page.continueCursor });
+    return null;
+  },
+});
+
+export const rolloverGroup = internalMutation({
+  args: { groupId: v.id("groups") },
+  returns: v.null(),
+  handler: async (ctx, { groupId }) => {
+    const group = await ctx.db.get(groupId);
+    if (group?.status === "active") {
+      const more = await rolloverDue(ctx, group);
+      if (more) await ctx.scheduler.runAfter(0, internal.ravo.entry.rolloverGroup, { groupId });
+      else await ctx.scheduler.runAfter(0, internal.ravo.pace.checkLag, { groupId });
     }
     return null;
   },

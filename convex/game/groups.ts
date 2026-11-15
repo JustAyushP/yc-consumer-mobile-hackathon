@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 import { MAX_PLAYERS, MIN_PLAYERS } from "./catalog";
-import { openDayImpl } from "./engine";
+import { currentGroup, openDayImpl } from "./engine";
 import { groupPlayers, loadPlayer, makeCode } from "./lib";
 
 const DEFAULT_CASE = "velvet-lantern";
@@ -33,8 +33,9 @@ export const join = internalMutation({
   args: { code: v.string(), playerName: v.string() },
   returns: v.object({ groupId: v.id("groups"), playerId: v.id("players") }),
   handler: async (ctx, { code, playerName }) => {
-    const group = await ctx.db.query("groups").withIndex("by_joinCode", (q) => q.eq("joinCode", code.trim().toUpperCase())).first();
+    let group = await ctx.db.query("groups").withIndex("by_joinCode", (q) => q.eq("joinCode", code.trim().toUpperCase())).first();
     if (!group) throw new Error("No case with that code");
+    group = await currentGroup(ctx, group);
     if (group.status === "solved") throw new Error("That case is closed");
     if ((await groupPlayers(ctx, group._id)).length >= MAX_PLAYERS) throw new Error("This team is full");
     const playerId = await ctx.db.insert("players", {
