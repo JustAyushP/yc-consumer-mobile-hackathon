@@ -9,6 +9,7 @@ import Svg, { Circle, Path } from "react-native-svg";
 import { api } from "@/convex/_generated/api";
 import { colors, fonts } from "./ui/theme";
 import { useViewerToken } from "./viewer";
+import { useBackendReady } from "./backend";
 
 export function Icon({ name, color = colors.amber }: { name: "world" | "investigation" | "profile"; color?: string }) {
   return <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.5}>
@@ -57,6 +58,12 @@ type ViewerApi = typeof api.game.viewer;
 type QueryName = "me" | "caseFile" | "board" | "story" | "team" | "timeline" | "reveal";
 
 export function ViewerRead<N extends QueryName>({ query, children }: { query: N; children: (data: FunctionReturnType<ViewerApi[N]>) => ReactNode }) {
+  const backendReady = useBackendReady();
+  if (!backendReady) return <><Notice title="Live case connection isn't configured" body="This build can show the demo preview, but it cannot load a live case yet." /><Action title="Explore the demo preview" subtitle="Fictional sample data, not a live case" onPress={() => router.push("/demo")} /></>;
+  return <LiveViewerRead query={query}>{children}</LiveViewerRead>;
+}
+
+function LiveViewerRead<N extends QueryName>({ query, children }: { query: N; children: (data: FunctionReturnType<ViewerApi[N]>) => ReactNode }) {
   const { token, ready } = useViewerToken();
   const results = useQueries(token ? { data: { query: api.game.viewer[query], args: { viewerToken: token } } } : {});
   const result = results.data as FunctionReturnType<ViewerApi[N]> | Error | undefined;

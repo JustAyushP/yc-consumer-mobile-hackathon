@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Action, Card, Copy, Heading, Icon, Page, Section, ui } from "./companion";
 import { demoCase } from "./demo-data";
@@ -25,7 +25,6 @@ export default function DemoPreview() {
           <View style={styles.map}><Image source={require("@/assets/images/velvet-lantern-scene.jpg")} style={styles.image} accessibilityLabel="Illustrative lounge map; the bar, stage and office are also listed below" />{locations.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`View ${item.name}`} onPress={() => router.setParams({ place: item.id })} style={[styles.pin, { left: `${item.x}%`, top: `${item.y}%` }]}><Text style={styles.pinText}>{item.number}</Text></Pressable>)}</View>
           <Text style={ui.small}>An illustrative setting, not a measured crime-scene plan.</Text>
           {locations.map(item => <Action key={item.id} title={`${item.number}  ${item.name}`} subtitle={item.subtitle} onPress={() => router.setParams({ place: item.id })} />)}
-          {location ? <Card><Text style={ui.eyebrow}>LOCATION {location.number}</Text><Text style={ui.sectionTitle}>{location.name}</Text><Copy muted>{location.id === "office" ? "Victor's office overlooks the rear alley. An open cash drawer, a spilled drink and a broken display cabinet are the first pieces of the scene." : location.id === "stage" ? "Vivian's final set ended here. Behind the curtain, a narrow passage connects the dressing room to the office corridor." : "Sal tended this bar on the night of the murder. The room fell silent when the lights went out."}</Copy><Action title="Close location" onPress={() => router.setParams({ place: "" })} /></Card> : null}
         </Section>
         <Section title="On the evidence board">{demoCase.evidence.map(item => <Card key={item.name}><Text style={ui.eyebrow}>{item.kind}</Text><Text style={ui.rowTitle}>{item.name}</Text><Copy muted>{item.summary}</Copy></Card>)}</Section>
         <Section title="Everyone has a version">{demoCase.suspects.map(person => <Card key={person.name}><Text style={ui.rowTitle}>{person.name}</Text><Text style={ui.eyebrow}>{person.title}</Text><Copy muted>{person.bio}</Copy></Card>)}</Section>
@@ -45,11 +44,27 @@ export default function DemoPreview() {
       <View style={styles.exit}><Copy muted>All people and venues in this preview are fictional. The artwork and sample progress illustrate the experience, not a live investigation.</Copy><Action title="Leave demo preview" subtitle="Open your personal link for the live case" onPress={() => router.replace("/")} /></View>
     </Page>
     <View style={[styles.tabs, { paddingBottom: Math.max(insets.bottom, 12) }]} accessibilityRole="tablist">{tabs.map(value => <Pressable key={value} accessibilityRole="tab" accessibilityState={{ selected: tab === value }} accessibilityLabel={labels[value]} onPress={() => router.setParams({ screen: value, place: "" })} style={styles.tab}><Icon name={value} color={tab === value ? colors.amber : colors.muted} /><Text style={[styles.tabText, tab === value && { color: colors.amber }]}>{labels[value]}</Text></Pressable>)}</View>
+    <Modal visible={tab === "world" && !!location} transparent onRequestClose={() => router.setParams({ place: "" })}>
+      <View style={styles.overlay}>
+        <Pressable accessibilityLabel="Close location" accessibilityRole="button" style={styles.backdrop} onPress={() => router.setParams({ place: "" })} />
+        <View accessibilityViewIsModal style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+          <ScrollView contentContainerStyle={{ gap: 16 }}>
+            <Text style={ui.eyebrow}>DEMO PREVIEW / PUBLIC LOCATION {location?.number}</Text>
+            <Heading>{location?.name}</Heading>
+            <Copy muted>{location?.id === "office" ? "Victor's office overlooks the rear alley. An open cash drawer, a spilled drink and a broken display cabinet are the first pieces of the scene." : location?.id === "stage" ? "Vivian's final set ended here. Behind the curtain, a narrow passage connects the dressing room to the office corridor." : "Sal tended this bar on the night of the murder. The room fell silent when the lights went out."}</Copy>
+            <Action title="Close location" onPress={() => router.setParams({ place: "" })} />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   </View>;
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  overlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.7)" },
+  backdrop: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
+  sheet: { backgroundColor: colors.surface, padding: 24, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "85%" },
   demoLabel: { alignSelf: "flex-start", borderWidth: 1, borderColor: "#5A4D39", borderRadius: 5, paddingVertical: 6, paddingHorizontal: 9, marginBottom: 20 },
   demoText: { color: colors.amber, fontFamily: fonts.body, fontSize: 10, lineHeight: 16 },
   hero: { marginHorizontal: -22, marginTop: 23, aspectRatio: 1264 / 848 },
