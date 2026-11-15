@@ -11,6 +11,7 @@ export function planCast(input: {
   characters: readonly Character[];
   castPlan: CastPlan;
 }): Character | undefined {
+  if (input.lineId !== "1" && input.lineId !== "2" && input.lineId !== "3") throw new Error("Invalid line");
   if (input.lineId === "1") return { agentKey: input.commonCharacter.agentKey, name: input.commonCharacter.name };
   if (!Number.isSafeInteger(input.roleOrdinal) || input.roleOrdinal < 0) throw new Error("Invalid role ordinal");
   const options = input.castPlan[input.role]?.[input.lineId];

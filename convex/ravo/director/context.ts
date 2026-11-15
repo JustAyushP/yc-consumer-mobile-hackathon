@@ -75,6 +75,7 @@ export function buildScriptedDirective(input: {
   teamEvents: readonly PublicTeamEvent[];
   publicTeamCatalog: PublicTeamCatalog;
 }): RavoDirective {
+  if (input.lineId !== "1" && input.lineId !== "2" && input.lineId !== "3") throw new Error("Invalid line");
   const crossPlayer = buildCrossPlayerContext(input.lineId, input.context.recipientId, input.teamEvents, input.publicTeamCatalog);
   return {
     character: { agentKey: input.context.character.agentKey, name: input.context.character.name },

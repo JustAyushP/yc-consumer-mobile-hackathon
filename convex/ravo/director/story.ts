@@ -50,17 +50,31 @@ export function planSharedEffects(
 ): PlannedEffect[] {
   const players = [...new Set(activePlayerIds)].sort();
   const active = new Set(players);
-  return effects.flatMap((effect): PlannedEffect[] => {
+  let currentCasts = casts.filter((cast) => active.has(cast.playerId));
+  if (currentCasts.some((cast) => cast.lineId !== "2" && cast.lineId !== "3")) throw new Error("Invalid cast line");
+  const planned: PlannedEffect[] = [];
+  for (const effect of effects) {
     if (effect.kind === "trust") {
-      return casts.filter((cast) => active.has(cast.playerId) && cast.agentKey === effect.agentKey)
+      planned.push(...currentCasts.filter((cast) => cast.agentKey === effect.agentKey)
         .slice().sort((a, b) => a.playerId < b.playerId ? -1 : a.playerId > b.playerId ? 1 : a.lineId < b.lineId ? -1 : a.lineId > b.lineId ? 1 : 0)
-        .map((cast) => ({ kind: "trust", agentKey: effect.agentKey, delta: effect.delta, playerId: cast.playerId, lineId: cast.lineId }));
+        .map((cast): PlannedEffect => ({ kind: "trust", agentKey: effect.agentKey, delta: effect.delta, playerId: cast.playerId, lineId: cast.lineId })));
+    } else if (effect.kind === "cast") {
+      if (effect.lineId !== "2" && effect.lineId !== "3") throw new Error("Invalid cast line");
+      currentCasts = currentCasts.filter((cast) => cast.lineId !== effect.lineId);
+      for (const playerId of players) {
+        const cast = { playerId, lineId: effect.lineId, agentKey: effect.agentKey };
+        currentCasts.push(cast);
+        planned.push({ kind: "cast", ...cast });
+      }
+    } else if (effect.kind === "flag") {
+      planned.push({ kind: "flag", key: effect.key, value: effect.value });
+    } else if (effect.kind === "unlockClue") {
+      planned.push({ kind: "unlockClue", clueKey: effect.clueKey });
+    } else {
+      throw new Error("Unsupported story effect");
     }
-    if (effect.kind === "cast") return players.map((playerId) => ({ kind: "cast", agentKey: effect.agentKey, lineId: effect.lineId, playerId }));
-    if (effect.kind === "flag") return [{ kind: "flag", key: effect.key, value: effect.value }];
-    if (effect.kind === "unlockClue") return [{ kind: "unlockClue", clueKey: effect.clueKey }];
-    throw new Error("Unsupported story effect");
-  });
+  }
+  return planned;
 }
 
 export function planStoryTransition(

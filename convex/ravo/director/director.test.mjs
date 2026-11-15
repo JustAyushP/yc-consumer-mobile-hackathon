@@ -62,6 +62,34 @@ test("unavailable and already completed beats cannot be forced past prerequisite
   assert.equal(selectEligibleBeat({ ...snapshot, doneBeats: ["fixture-a"], unlockedClues: ["e_locked"] }, beats)?.key, "fixture-b");
 });
 
+test("shared effects use casts in authored order", () => {
+  const casts = [{ playerId: "p1", lineId: "2", agentKey: "s_vivian" }];
+  const cast = { kind: "cast", lineId: "2", agentKey: "s_leo" };
+  const trust = { kind: "trust", agentKey: "s_leo", delta: 1 };
+  assert.deepEqual(planSharedEffects([cast, trust], ["p1"], casts), [
+    { kind: "cast", playerId: "p1", lineId: "2", agentKey: "s_leo" },
+    { kind: "trust", playerId: "p1", lineId: "2", agentKey: "s_leo", delta: 1 },
+  ]);
+  assert.deepEqual(planSharedEffects([trust, cast], ["p1"], casts), [
+    { kind: "cast", playerId: "p1", lineId: "2", agentKey: "s_leo" },
+  ]);
+  assert.deepEqual(planSharedEffects([cast, { kind: "trust", agentKey: "s_vivian", delta: -1 }], ["p1"], casts), [
+    { kind: "cast", playerId: "p1", lineId: "2", agentKey: "s_leo" },
+  ]);
+});
+
+test("invalid lines are rejected at runtime", () => {
+  for (const lineId of ["1", "4", ""]) {
+    assert.throws(() => planSharedEffects([{ kind: "cast", lineId, agentKey: "s_vivian" }], ["p1"], []), /Invalid cast line/);
+    assert.throws(() => planSharedEffects([{ kind: "trust", agentKey: "s_vivian", delta: 1 }], ["p1"], [{ playerId: "p1", lineId, agentKey: "s_vivian" }]), /Invalid cast line/);
+  }
+  for (const lineId of ["4", ""]) {
+    assert.throws(() => planCast({ ...castInput, lineId }), /Invalid line/);
+    assert.throws(() => buildScriptedDirective({ lineId, context, teamEvents, publicTeamCatalog }), /Invalid line/);
+    assert.equal(buildCrossPlayerContext(lineId, "p1", teamEvents, publicTeamCatalog), undefined);
+  }
+});
+
 test("casting is deterministic, role matched, and common on line one", () => {
   assert.deepEqual(planCast({ ...castInput, lineId: "1" }), commonCharacter);
   assert.deepEqual(planCast({ ...castInput, lineId: "2" }), characters[0]);
