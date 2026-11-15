@@ -1,10 +1,18 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { internal } from "../_generated/api";
 import schema from "../schema";
+import { settleScheduled } from "./testScheduler.support";
 
 const DAY = 86_400_000;
+let activeTest: ReturnType<typeof convexTest<typeof schema.tables>> | undefined;
+let errorLog: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  vi.stubEnv("RAVO_OFFLINE", "1");
+  errorLog = vi.spyOn(console, "error");
+});
 
 vi.mock("../ravo/director/content", () => ({
   reviewedContentForCase: (key: string) => key === "fixture" ? {
@@ -14,6 +22,7 @@ vi.mock("../ravo/director/content", () => ({
 
 async function fixture() {
   const t = convexTest(schema, import.meta.glob("/convex/**/*.{ts,js}"));
+  activeTest = t;
   const ids = await t.run(async (ctx) => {
     const caseId = await ctx.db.insert("cases", { key: "fixture", title: "Case", setting: "Place", victim: "Victim", logline: "Case", culpritKey: "fixed", reveal: ["SOLUTION SECRET"] });
     const groupId = await ctx.db.insert("groups", { name: "A", joinCode: "AAAAA", caseId, status: "active", day: 1, dayOpenedAt: Date.now(), progress: 0, wrongAccusations: 0 });
@@ -36,7 +45,17 @@ async function fixture() {
   return { t, ...ids };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(async () => {
+  try {
+    if (activeTest) await settleScheduled(activeTest);
+    expect(errorLog).not.toHaveBeenCalled();
+  } finally {
+    activeTest = undefined;
+    errorLog.mockRestore();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  }
+});
 
 it("processes a structured answer atomically, replays the directive and keeps private material out", async () => {
   const { t, groupId, playerId, teammateId, messageId, answerId, clueId, caseId } = await fixture();
