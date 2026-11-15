@@ -1,23 +1,25 @@
+import { Platform } from "react-native";
+
 export const colors = {
-  bg: "#0B0A0D",
-  surface: "#15131A",
-  surfaceRaised: "#1E1B24",
-  line: "#2A2630",
+  bg: "#101114",
+  surface: "#1B1C20",
+  surfaceRaised: "#402A37",
+  line: "#353339",
   paper: "#E9DFC7",
   ink: "#1A1612",
-  text: "#EDE6D6",
-  muted: "#8A8291",
-  amber: "#E2A33B",
+  text: "#F2E9DA",
+  muted: "#AAA6A0",
+  amber: "#D5AE68",
   blood: "#B3261E",
   ravo: "#E2A33B",
 };
 
 export const fonts = {
-  display: "PlayfairDisplay_900Black",
-  displayItalic: "PlayfairDisplay_700Bold_Italic",
+  display: Platform.OS === "android" ? "serif" : "Georgia",
+  displayItalic: Platform.OS === "android" ? "serif" : "Georgia-Italic",
   typewriter: "SpecialElite_400Regular",
-  body: "Inter_400Regular",
-  bodyBold: "Inter_600SemiBold",
+  body: Platform.OS === "android" ? "sans-serif" : "Arial",
+  bodyBold: Platform.select({ ios: "Arial-BoldMT", android: "sans-serif-medium", default: "Arial" }),
 };
 
 export const space = { xs: 4, sm: 8, md: 16, lg: 24, xl: 40 };
