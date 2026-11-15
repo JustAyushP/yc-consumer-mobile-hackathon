@@ -1,10 +1,10 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { mutation } from "../_generated/server";
+import { internalMutation } from "../_generated/server";
 import { hintsLeft, loadPlayer } from "../game/lib";
 
 /** A player asks RAVO for a hint. Max 3 per group per week, enforced by game.engine.giveHint. */
-export const request = mutation({
+export const request = internalMutation({
   args: { playerId: v.id("players") },
   returns: v.object({ given: v.boolean(), hintsLeft: v.number() }),
   handler: async (ctx, { playerId }): Promise<{ given: boolean; hintsLeft: number }> => {

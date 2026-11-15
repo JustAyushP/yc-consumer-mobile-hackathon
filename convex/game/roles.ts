@@ -1,11 +1,11 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { internalMutation, query } from "../_generated/server";
+import { internalMutation, internalQuery } from "../_generated/server";
 import { vRoleKey } from "../schema";
 import { CORE_ROLES, ROLES, RoleKey, SURVEY } from "./catalog";
 import { groupPlayers, loadPlayer } from "./lib";
 
-export const list = query({
+export const list = internalQuery({
   args: {},
   handler: async () => Object.values(ROLES),
 });

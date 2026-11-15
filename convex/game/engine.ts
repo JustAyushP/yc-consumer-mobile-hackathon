@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
-import { internalMutation, mutation, MutationCtx } from "../_generated/server";
-import { groupPlayers, hintsLeft, loadPlayer, weekOf } from "./lib";
+import { internalMutation, MutationCtx } from "../_generated/server";
+import { groupPlayers, hintsLeft, weekOf } from "./lib";
 
 // Engine mutations: the only way game state changes. RAVO calls these, never the tables directly.
 
@@ -101,13 +101,14 @@ export const fastForwardDay = internalMutation({
   },
 });
 
-/** Demo control: the hidden "fast-forward day" button. */
-export const fastForward = mutation({
-  args: { playerId: v.id("players") },
-  returns: v.null(),
-  handler: async (ctx, { playerId }) => {
-    const { group } = await loadPlayer(ctx, playerId);
+/** Demo control, run from a terminal: scripts/fast-forward.sh <JOIN_CODE>. */
+export const fastForwardByCode = internalMutation({
+  args: { joinCode: v.string() },
+  returns: v.number(),
+  handler: async (ctx, { joinCode }) => {
+    const group = await ctx.db.query("groups").withIndex("by_joinCode", (q) => q.eq("joinCode", joinCode.trim().toUpperCase())).first();
+    if (!group) throw new Error(`No group with join code ${joinCode}`);
     await ctx.runMutation(internal.game.engine.fastForwardDay, { groupId: group._id });
-    return null;
+    return group.day + 1;
   },
 });

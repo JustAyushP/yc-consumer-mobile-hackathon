@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { Doc } from "../_generated/dataModel";
-import { mutation, MutationCtx, query } from "../_generated/server";
+import { internalMutation, internalQuery, MutationCtx } from "../_generated/server";
 import { ROLES } from "./catalog";
 import { loadPlayer } from "./lib";
 
@@ -13,7 +13,7 @@ async function ensureSession(ctx: MutationCtx, group: Doc<"groups">, player: Doc
 }
 
 /** Today's session for one player: briefing, questions with their answers, ability state. */
-export const today = query({
+export const today = internalQuery({
   args: { playerId: v.id("players") },
   handler: async (ctx, { playerId }) => {
     const { player, group } = await loadPlayer(ctx, playerId);
@@ -33,7 +33,7 @@ export const today = query({
   },
 });
 
-export const submitAnswer = mutation({
+export const submitAnswer = internalMutation({
   args: { playerId: v.id("players"), questionKey: v.string(), text: v.string() },
   returns: v.id("answers"),
   handler: async (ctx, { playerId, questionKey, text }) => {
@@ -51,7 +51,7 @@ export const submitAnswer = mutation({
 });
 
 /** The role's once-per-day special ability, on a clue key or a suspect key. */
-export const useAbility = mutation({
+export const useAbility = internalMutation({
   args: { playerId: v.id("players"), targetKey: v.string() },
   returns: v.string(),
   handler: async (ctx, { playerId, targetKey }) => {
@@ -72,7 +72,7 @@ export const useAbility = mutation({
   },
 });
 
-export const complete = mutation({
+export const complete = internalMutation({
   args: { playerId: v.id("players") },
   returns: v.null(),
   handler: async (ctx, { playerId }) => {

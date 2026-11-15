@@ -10,6 +10,13 @@ export async function loadPlayer(ctx: QueryCtx, playerId: Id<"players">) {
   return { player, group };
 }
 
+/** Resolves the read-only app's viewer from the token in their texted link. Every public query goes through this. */
+export async function requireViewer(ctx: QueryCtx, viewerToken: string) {
+  const row = await ctx.db.query("viewerTokens").withIndex("by_token", (q) => q.eq("token", viewerToken)).first();
+  if (!row || row.expiresAt < Date.now()) throw new Error("This link has expired. Text RAVO for a new one.");
+  return await loadPlayer(ctx, row.playerId);
+}
+
 export async function groupPlayers(ctx: QueryCtx, groupId: Id<"groups">) {
   return await ctx.db.query("players").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect();
 }

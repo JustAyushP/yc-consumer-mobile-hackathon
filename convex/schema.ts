@@ -179,6 +179,20 @@ export default defineSchema({
     body: v.string(),
   }).index("by_group_week", ["groupId", "week"]),
 
+  casts: defineTable({
+    groupId: v.id("groups"),
+    playerId: v.id("players"),
+    lineId: v.string(),
+    agentKey: v.string(),
+  }).index("by_player_line", ["playerId", "lineId"]),
+
+  viewerTokens: defineTable({
+    token: v.string(),
+    playerId: v.id("players"),
+    groupId: v.id("groups"),
+    expiresAt: v.number(),
+  }).index("by_token", ["token"]),
+
   warnings: defineTable({
     groupId: v.id("groups"),
     playerId: v.id("players"),

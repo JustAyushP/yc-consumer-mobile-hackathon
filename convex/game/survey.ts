@@ -1,16 +1,17 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { mutation, query } from "../_generated/server";
+import { internalMutation, internalQuery } from "../_generated/server";
 import { SURVEY } from "./catalog";
 import { loadPlayer } from "./lib";
 
-export const questions = query({
+/** The survey Comms walks each player through in their messages. */
+export const questions = internalQuery({
   args: {},
   handler: async () => SURVEY.map((q) => ({ id: q.id, prompt: q.prompt, options: q.options.map((o) => o.label) })),
 });
 
 /** Saves the player's answers (option index per survey question) and assigns their role. */
-export const submit = mutation({
+export const submit = internalMutation({
   args: { playerId: v.id("players"), answers: v.array(v.object({ questionKey: v.string(), optionIndex: v.number() })) },
   returns: v.null(),
   handler: async (ctx, { playerId, answers }) => {

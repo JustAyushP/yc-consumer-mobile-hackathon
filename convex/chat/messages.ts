@@ -1,25 +1,25 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { internalMutation, internalQuery, mutation, query } from "../_generated/server";
-import { vMessageKind } from "../schema";
+import { internalMutation, internalQuery } from "../_generated/server";
+import { vMessageKind, vMessageSource } from "../schema";
 
-/** In-app send. Builder 2: also mirror out to Keiki here. */
-export const send = mutation({
-  args: { playerId: v.id("players"), body: v.string() },
+/** Ingest of a player's message (from Keiki). Builder 2: call this from the webhook. */
+export const send = internalMutation({
+  args: { playerId: v.id("players"), body: v.string(), source: vMessageSource, externalId: v.optional(v.string()), agentKey: v.optional(v.string()) },
   returns: v.union(v.id("messages"), v.null()),
-  handler: async (ctx, { playerId, body }) => {
+  handler: async (ctx, { playerId, body, source, externalId, agentKey }) => {
     const player = await ctx.db.get(playerId);
     if (!player) throw new Error("Unknown detective");
     const text = body.trim().slice(0, 1000);
     if (!text) return null;
-    const messageId = await ctx.db.insert("messages", { groupId: player.groupId, kind: "chat", source: "app", playerId, body: text });
+    const messageId = await ctx.db.insert("messages", { groupId: player.groupId, kind: "chat", source, playerId, body: text, externalId, agentKey });
     await ctx.scheduler.runAfter(0, internal.ravo.entry.onMessage, { groupId: player.groupId, messageId });
     return messageId;
   },
 });
 
-/** Live query: the group's thread, oldest first, with author names. */
-export const list = query({
+/** The group's thread, oldest first, with author names. Internal: the app is read-only and never shows raw chat. */
+export const list = internalQuery({
   args: { groupId: v.id("groups") },
   handler: async (ctx, { groupId }) => {
     const rows = (await ctx.db.query("messages").withIndex("by_group", (q) => q.eq("groupId", groupId)).order("desc").take(200)).reverse();

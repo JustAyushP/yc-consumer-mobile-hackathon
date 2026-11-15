@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { mutation, query } from "../_generated/server";
+import { internalMutation } from "../_generated/server";
 import { loadPlayer } from "./lib";
 
-export const accuse = mutation({
+export const accuse = internalMutation({
   args: { playerId: v.id("players"), suspectKey: v.string(), reasoning: v.string() },
   returns: v.object({ correct: v.boolean() }),
   handler: async (ctx, { playerId, suspectKey, reasoning }) => {
@@ -25,16 +25,5 @@ export const accuse = mutation({
     await ctx.db.patch(group._id, { status: "solved", solvedBy: playerId, solvedDay: group.day });
     await ctx.scheduler.runAfter(0, internal.chat.messages.postRavoMessage, { groupId: group._id, kind: "reveal", body: kase.reveal.join("\n\n") });
     return { correct };
-  },
-});
-
-/** The full story, available once the case is solved. */
-export const reveal = query({
-  args: { playerId: v.id("players") },
-  handler: async (ctx, { playerId }) => {
-    const { group } = await loadPlayer(ctx, playerId);
-    if (group.status !== "solved") return null;
-    const kase = (await ctx.db.get(group.caseId))!;
-    return { culpritKey: kase.culpritKey, story: kase.reveal, solvedBy: group.solvedBy ?? null, solvedDay: group.solvedDay ?? null };
   },
 });

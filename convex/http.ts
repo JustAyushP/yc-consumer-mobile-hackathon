@@ -14,13 +14,13 @@ http.route({
   handler: httpAction(async () => json({ ok: true })),
 });
 
-/** Tool endpoint for Keiki-hosted characters: body { groupId, playerId?, messageId, agentKey? } -> RavoDirective. Builder 2: add signature verification. */
+/** Tool endpoint for Keiki-hosted characters: body { groupId, playerId?, messageId, lineId, agentKey? } -> RavoDirective. Builder 2: add signature verification. */
 http.route({
   path: "/keiki/consult",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    const body = (await request.json()) as { groupId: Id<"groups">; playerId?: Id<"players">; messageId: Id<"messages">; agentKey?: string };
-    if (!body.groupId || !body.messageId) return json({ error: "groupId and messageId are required" }, 400);
+    const body = (await request.json()) as { groupId: Id<"groups">; playerId?: Id<"players">; messageId: Id<"messages">; lineId: string; agentKey?: string };
+    if (!body.groupId || !body.messageId || !body.lineId) return json({ error: "groupId, messageId, and lineId are required" }, 400);
     return json(await ctx.runAction(internal.ravo.consult.consult, body));
   }),
 });

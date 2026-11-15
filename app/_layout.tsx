@@ -9,6 +9,7 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 
 import { colors } from "@/components/ui/theme";
+import { ViewerProvider } from "@/components/viewer";
 
 const url = process.env.EXPO_PUBLIC_CONVEX_URL;
 if (!url) throw new Error("EXPO_PUBLIC_CONVEX_URL is missing. Run the `convex push` command to write .env.local.");
@@ -26,8 +27,10 @@ export default function RootLayout() {
   if (!loaded) return null;
   return (
     <ConvexProvider client={convex}>
-      <StatusBar style="light" />
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }} />
+      <ViewerProvider>
+        <StatusBar style="light" />
+        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }} />
+      </ViewerProvider>
     </ConvexProvider>
   );
 }
