@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
 import type { Claim } from "./keikiHandler";
 
@@ -63,6 +64,15 @@ export const complete = internalMutation({
     if (!player || !group || player.groupId !== group._id) throw new Error("Invalid binding");
     const scope: unknown = JSON.parse(receipt.eventKey);
     if (!Array.isArray(scope) || scope.length !== 7 || JSON.stringify(scope.slice(0, 6)) !== JSON.stringify(["keiki-demo-trace", binding.agentId, binding.channel, binding.conversationId, binding.senderId, binding.lineId])) throw new Error("Invalid binding");
+    const { authorized } = await ctx.runQuery(internal.ravo.consult.authorizeCachedDirective, {
+      groupId: binding.groupId,
+      playerId: binding.playerId,
+      messageId: receipt.messageId,
+      lineId: binding.lineId,
+      agentKey: "common",
+      directiveJson,
+    });
+    if (!authorized) throw new Error("Directive authorization denied");
     await ctx.db.patch(receiptId, { status: "completed", directiveJson });
     return null;
   },

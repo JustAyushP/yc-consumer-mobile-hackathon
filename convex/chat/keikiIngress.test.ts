@@ -1,7 +1,10 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
+import type { FunctionArgs } from "convex/server";
+import { v } from "convex/values";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { internal } from "../_generated/api";
+import { internalQuery } from "../_generated/server";
 import schema from "../schema";
 import { handleConsult, type DemoConfig, type Dependencies } from "./keikiHandler";
 
@@ -22,8 +25,19 @@ function request(body: unknown = payload, headers: Record<string, string | null>
   return new Request(`https://example.test/keiki/consult${query}`, { method: "POST", headers: values, body: JSON.stringify(body) });
 }
 
-async function setup() {
-  const t = convexTest(schema, import.meta.glob("/convex/**/*.{ts,js}"));
+async function setup(realAuthorization = false) {
+  const authorize = vi.fn<(args: FunctionArgs<typeof internal.ravo.consult.authorizeCachedDirective>) => Promise<{ authorized: boolean }>>(async () => ({ authorized: true }));
+  const modules = import.meta.glob("/convex/**/*.{ts,js}");
+  if (!realAuthorization) {
+    modules["/convex/ravo/consult.ts"] = async () => ({
+      authorizeCachedDirective: internalQuery({
+        args: { groupId: v.id("groups"), playerId: v.id("players"), messageId: v.id("messages"), lineId: v.string(), agentKey: v.string(), directiveJson: v.string() },
+        returns: v.object({ authorized: v.boolean() }),
+        handler: (_ctx, args) => authorize(args),
+      }),
+    });
+  }
+  const t = convexTest(schema, modules);
   const ids = await t.run(async (ctx) => {
     const caseId = await ctx.db.insert("cases", { key: "demo", title: "Case", setting: "Bar", victim: "Victim", logline: "Case", culpritKey: "culprit", reveal: ["Solution"] });
     const groupId = await ctx.db.insert("groups", { name: "Demo", joinCode: "DEMO", caseId, status: "active", day: 1, dayOpenedAt: Date.now(), progress: 0, wrongAccusations: 0 });
@@ -36,10 +50,11 @@ async function setup() {
     return { caseId, groupId, otherGroupId, playerId, secondPlayerId, bindingId, secondBindingId };
   });
   const consult = vi.fn<Dependencies["consult"]>(async ({ playerId }) => ({ character: { agentKey: "common", name: "Fixture actor" }, guidance: `Private fixture for ${playerId}` }));
+  const complete = vi.fn<Dependencies["complete"]>((receiptId, directiveJson) => t.mutation(internal.chat.keikiIngress.complete, { receiptId, directiveJson }));
   const deps: Dependencies = {
     claim: (args) => t.mutation(internal.chat.keikiIngress.claim, args),
     consult,
-    complete: (receiptId, directiveJson) => t.mutation(internal.chat.keikiIngress.complete, { receiptId, directiveJson }),
+    complete,
     uncertain: (receiptId) => t.mutation(internal.chat.keikiIngress.uncertain, { receiptId }),
   };
   const send = (req = request(), env = config) => handleConsult(req, env, deps);
@@ -48,10 +63,10 @@ async function setup() {
     receipts: await ctx.db.query("keikiReceipts").collect(),
     scheduled: await ctx.db.system.query("_scheduled_functions").collect(),
   }));
-  return { t, ...ids, deps, consult, send, state };
+  return { t, ...ids, deps, consult, authorize, complete, send, state };
 }
 
-describe("demo ingress with fake hosted transport and fake master", () => {
+describe("demo ingress with fake hosted transport, fake master, and fake authorization", () => {
   it.each([undefined, "", "false", "TRUE"])("fails closed with enabled=%s", async (enabled) => {
     const { send, state, consult } = await setup();
     expect((await send(request(), { ...config, enabled })).status).toBe(503);
@@ -148,7 +163,7 @@ describe("demo ingress with fake hosted transport and fake master", () => {
   });
 
   it("stores the verbatim bounded message, calls master once, and caches its directive without scheduling onMessage", async () => {
-    const { send, state, consult, groupId, playerId } = await setup();
+    const { send, state, consult, authorize, groupId, playerId } = await setup();
     const body = `  ${"x".repeat(7995)}\n `;
     const original = { ...payload, input: { ...payload.input, playerMessage: body } };
     const first = await send(request(original));
@@ -162,10 +177,29 @@ describe("demo ingress with fake hosted transport and fake master", () => {
     expect(saved.receipts[0]).toMatchObject({ status: "completed", messageId: saved.messages[0]._id, directiveJson: JSON.stringify(directive) });
     expect(saved.scheduled).toHaveLength(0);
     expect(consult).toHaveBeenCalledExactlyOnceWith({ groupId, playerId, messageId: saved.messages[0]._id, lineId: "1", agentKey: "common" });
+    expect(consult.mock.calls[0][0]).not.toHaveProperty("answerId");
+    expect(authorize).toHaveBeenCalledExactlyOnceWith({ groupId, playerId, messageId: saved.messages[0]._id, lineId: "1", agentKey: "common", directiveJson: JSON.stringify(directive) });
     const replay = await send(request(original));
     expect(replay.status).toBe(409);
     expect(await replay.text()).not.toContain(directive.guidance);
     expect(consult).toHaveBeenCalledTimes(1);
+    expect((await state()).messages).toHaveLength(1);
+  });
+
+  it.each(["denied", "error"])("rolls back completion when its fake authorization query is %s without retrying consult", async (mode) => {
+    const { send, authorize, consult, complete, state } = await setup();
+    if (mode === "denied") authorize.mockResolvedValueOnce({ authorized: false });
+    else authorize.mockRejectedValueOnce(new Error("private authorization failure"));
+    const response = await send();
+    expect(response.status).toBe(503);
+    const responseText = await response.text();
+    expect(responseText).not.toContain("Private fixture");
+    expect(responseText).not.toContain("private authorization failure");
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect((await state()).receipts[0]).toMatchObject({ status: "uncertain" });
+    expect((await send()).status).toBe(409);
+    expect(consult).toHaveBeenCalledTimes(1);
+    expect(authorize).toHaveBeenCalledTimes(1);
     expect((await state()).messages).toHaveLength(1);
   });
 
@@ -273,9 +307,9 @@ describe("demo ingress with fake hosted transport and fake master", () => {
   });
 });
 
-describe("demo ingress with real deterministic internal RAVO consult", () => {
-  it("wires the real HTTP route through claim, master, completion, and rejected replay", async () => {
-    const { t, state } = await setup();
+describe("demo ingress with fake hosted transport and real deterministic RAVO consult/authorization", () => {
+  it("wires the real HTTP route through empty reviewed knowledge, initial authorization, and rejected completed replay", async () => {
+    const { t, state } = await setup(true);
     vi.stubEnv("KEIKI_DEMO_INGRESS_ENABLED", "true");
     vi.stubEnv("KEIKI_TOOL_API_KEY", "fixture-tool-key");
     vi.stubEnv("KEIKI_DEMO_AGENT_ID", "demo-agent");
@@ -286,53 +320,100 @@ describe("demo ingress with real deterministic internal RAVO consult", () => {
     expect(response.status).toBe(200);
     const directive = await response.json();
     expect(directive).toMatchObject({ character: { agentKey: "common", name: "Sal, the night bartender" }, tone: "noir", progressDelta: 0 });
+    expect(directive.reveal).toBeUndefined();
+    expect(directive.crossPlayer).toBeUndefined();
     const replay = await t.fetch("/keiki/consult?lineId=1", init);
     expect(replay.status).toBe(409);
     expect(await replay.text()).not.toContain(directive.guidance);
     expect((await state()).messages).toHaveLength(1);
-    expect((await state()).receipts[0].status).toBe("completed");
+    const saved = await state();
+    expect(saved.receipts[0].status).toBe("completed");
+    expect(await t.query(internal.ravo.consult.authorizeCachedDirective, {
+      groupId: saved.messages[0].groupId,
+      playerId: saved.messages[0].playerId!,
+      messageId: saved.messages[0]._id,
+      lineId: "1",
+      agentKey: "common",
+      directiveJson: JSON.stringify(directive),
+    })).toEqual({ authorized: true });
   });
 
-  it.each(["unchanged", "case", "cast", "clue"])("returns the initial directive but refuses replay with %s entitlement, without repeating effects", async (mode) => {
-    const { t, send, deps, caseId, groupId, playerId, state } = await setup();
-    await t.run(async (ctx) => {
+  it.each(["unchanged", "case", "cast", "clue"])("never awards freeform proof effects and refuses completed replay after %s fixture changes", async (mode) => {
+    const { t, send, deps, caseId, groupId, playerId, state, complete } = await setup(true);
+    const existingUnlockId = await t.run(async (ctx) => {
       await ctx.db.insert("insights", { caseId, key: "proof", label: "Established deduction", weight: 1, keywords: [["proof"]], hint: "Inspect evidence" });
       await ctx.db.insert("clues", { caseId, key: "receipt", name: "Receipt", kind: "evidence", summary: "Allowed evidence", detail: "Unshared detail", unlock: { insight: "proof" } });
+      return mode === "clue" ? await ctx.db.insert("clueUnlocks", { groupId, clueKey: "receipt", day: 1 }) : null;
     });
-    let consultFailure: unknown;
-    deps.consult = async (args) => {
-      try {
-        return await t.action(internal.ravo.consult.consult, args);
-      } catch (error) {
-        consultFailure = error;
-        throw error;
-      }
-    };
+    const gameState = () => t.run(async (ctx) => ({
+      progress: await ctx.db.query("progress").collect(),
+      unlocks: await ctx.db.query("clueUnlocks").collect(),
+      answers: await ctx.db.query("answers").collect(),
+      groupProgress: (await ctx.db.get(groupId))!.progress,
+    }));
+    const before = await gameState();
+    const realConsult = vi.fn<Dependencies["consult"]>((args) => t.action(internal.ravo.consult.consult, args));
+    deps.consult = realConsult;
     const first = await send(request({ ...payload, input: { ...payload.input, playerMessage: "proof" } }));
-    expect(consultFailure).toBeUndefined();
     expect(first.status).toBe(200);
     const directive = await first.json();
-    expect(directive).toMatchObject({ character: { agentKey: "common", name: "Sal, the night bartender" }, reveal: { text: "Receipt: Allowed evidence" }, tone: "noir", progressDelta: 100 });
-    expect(JSON.stringify(directive)).not.toContain("Unshared detail");
+    expect(directive).toMatchObject({ character: { agentKey: "common", name: "Sal, the night bartender" }, tone: "noir", progressDelta: 0 });
+    expect(directive.reveal).toBeUndefined();
+    expect(directive.crossPlayer).toBeUndefined();
+    expect(directive.guidance).toContain("Scripted guidance (no live model)");
+    for (const excluded of ["Allowed evidence", "Unshared detail", "Established deduction"]) expect(JSON.stringify(directive)).not.toContain(excluded);
+    expect(realConsult.mock.calls[0][0]).not.toHaveProperty("answerId");
+    expect((await state()).messages[0]).not.toHaveProperty("answerId");
+    expect(await gameState()).toEqual(before);
+    expect(before).toMatchObject({ progress: [], answers: [], groupProgress: 0 });
+    expect(before.unlocks).toHaveLength(mode === "clue" ? 1 : 0);
     await t.run(async (ctx) => {
       if (mode === "case") {
         const replacement = await ctx.db.insert("cases", { key: "replacement", title: "Other", setting: "Other", victim: "Other", logline: "Other", culpritKey: "other", reveal: [] });
         await ctx.db.patch(groupId, { caseId: replacement });
       }
       if (mode === "cast") await ctx.db.insert("casts", { groupId, playerId, lineId: "1", agentKey: "different-character" });
-      if (mode === "clue") {
-        const unlock = (await ctx.db.query("clueUnlocks").withIndex("by_group", (q) => q.eq("groupId", groupId)).first())!;
-        await ctx.db.delete(unlock._id);
-      }
+      if (existingUnlockId) await ctx.db.delete(existingUnlockId);
     });
     const second = await send(request({ ...payload, input: { ...payload.input, playerMessage: "proof" } }));
     expect(second.status).toBe(409);
     expect(await second.text()).not.toContain("Allowed evidence");
-    const game = await t.run(async (ctx) => ({ progress: await ctx.db.query("progress").collect(), unlocks: await ctx.db.query("clueUnlocks").collect() }));
-    expect(game.progress).toHaveLength(1);
-    expect(game.progress[0].playerId).toBe(playerId);
-    expect(game.unlocks).toHaveLength(mode === "clue" ? 0 : 1);
+    const game = await gameState();
+    expect(game).toMatchObject({ progress: [], answers: [], unlocks: [], groupProgress: 0 });
+    expect(realConsult).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+    const events = await t.run(async (ctx) => ctx.db.query("storyEvents").collect());
+    expect(events).toHaveLength(1);
+    expect(events[0]).not.toHaveProperty("answerId");
     expect((await state()).receipts).toHaveLength(1);
     expect((await state()).scheduled).toHaveLength(0);
+  });
+
+  it("suppresses initial delivery when the case is solved after consult but before completion", async () => {
+    const { t, send, deps, groupId, state, complete } = await setup(true);
+    let directiveJson: string | undefined;
+    const realConsult = vi.fn<Dependencies["consult"]>(async (args) => {
+      const directive = await t.action(internal.ravo.consult.consult, args);
+      directiveJson = JSON.stringify(directive);
+      expect(await t.query(internal.ravo.consult.authorizeCachedDirective, { ...args, directiveJson })).toEqual({ authorized: true });
+      await t.run(async (ctx) => ctx.db.patch(groupId, { status: "solved" }));
+      return directive;
+    });
+    deps.consult = realConsult;
+    const response = await send();
+    expect(response.status).toBe(503);
+    const responseText = await response.text();
+    expect(responseText).not.toContain("Scripted guidance");
+    expect(responseText).not.toContain("Sal, the night bartender");
+    const saved = await state();
+    expect(saved.receipts[0]).toMatchObject({ status: "uncertain" });
+    expect(saved.receipts[0].directiveJson).toBeUndefined();
+    expect(await t.query(internal.ravo.consult.authorizeCachedDirective, {
+      groupId, playerId: saved.messages[0].playerId!, messageId: saved.messages[0]._id, lineId: "1", agentKey: "common", directiveJson: directiveJson!,
+    })).toEqual({ authorized: false });
+    expect((await send()).status).toBe(409);
+    expect(realConsult).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect((await state()).messages).toHaveLength(1);
   });
 });
