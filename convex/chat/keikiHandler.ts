@@ -93,7 +93,6 @@ export async function handleConsult(request: Request, config: DemoConfig, deps: 
   const { input, context } = payload;
   if ("internal" in context) return json({ error: "Dashboard turns are not supported" }, 403);
   if (!only(input, ["playerMessage", "summary", "intent"])) return json({ error: "Invalid request", reason: "unsupported_input_fields" }, 400);
-  if (!only(context, ["phone", "channel"])) return json({ error: "Invalid request", reason: "unsupported_context_fields" }, 400);
   if (!nonempty(input.playerMessage) || input.playerMessage.length > 8000) return json({ error: "Invalid request", reason: "invalid_player_message" }, 400);
   if (typeof input.summary !== "string" || input.summary.length > 1000) return json({ error: "Invalid request", reason: "invalid_summary" }, 400);
   if (typeof input.intent !== "string" || !["theory", "question", "answer", "chat", "join"].includes(input.intent)) return json({ error: "Invalid request", reason: "invalid_intent" }, 400);

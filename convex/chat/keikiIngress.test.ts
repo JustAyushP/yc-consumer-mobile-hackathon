@@ -82,7 +82,6 @@ describe("fixed validation reasons without payload disclosure", () => {
     [{ ...payload, context: null }, "invalid_context"],
     [{ ...payload, context: [] }, "invalid_context"],
     [{ ...payload, input: { ...payload.input, "fixture-private-key-name": "fixture-private-value" } }, "unsupported_input_fields"],
-    [{ ...payload, context: { ...payload.context, "fixture-private-key-name": "fixture-private-value" } }, "unsupported_context_fields"],
     [{ ...payload, input: { ...payload.input, playerMessage: " " } }, "invalid_player_message"],
     [{ ...payload, input: { ...payload.input, playerMessage: 123 } }, "invalid_player_message"],
     [{ ...payload, input: { ...payload.input, playerMessage: "x".repeat(8001) } }, "invalid_player_message"],
@@ -143,6 +142,58 @@ describe("fixed validation reasons without payload disclosure", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "Dashboard turns are not supported" });
     expect(consult).not.toHaveBeenCalled();
+  });
+});
+
+describe("unconsumed context metadata", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("ignores extra identity fields and metadata instead of routing, persisting or disclosing them", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, deps, consult, complete, state, playerId, groupId, secondPlayerId, otherGroupId } = await setup();
+    const claim = vi.spyOn(deps, "claim");
+    const response = await send(request({ ...payload, context: {
+      ...payload.context,
+      senderId: "other-sender",
+      botId: "1000000002",
+      agentId: "other-agent",
+      agentKey: "other-character",
+      lineId: "2",
+      playerId: secondPlayerId,
+      groupId: otherGroupId,
+      conversationId: "other-conversation",
+      metadata: { privateValue: "fixture-private-extra" },
+    } }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ character: { agentKey: "common", name: "Fixture actor" }, guidance: `Private fixture for ${playerId}` });
+    expect(claim).toHaveBeenCalledExactlyOnceWith({
+      agentId: config.agentId, channel: "telegram", senderId: payload.context.phone, lineId: "1",
+      conversationId: JSON.stringify(["telegram", telegramBotId, payload.context.phone]),
+      eventKey: JSON.stringify(["keiki-demo-trace", config.agentId, "telegram", JSON.stringify(["telegram", telegramBotId, payload.context.phone]), payload.context.phone, "1", "demo-trace"]),
+      body: payload.input.playerMessage,
+    });
+    const saved = await state();
+    expect(consult).toHaveBeenCalledExactlyOnceWith({ groupId, playerId, messageId: saved.messages[0]._id, lineId: "1", agentKey: "common" });
+    expect(saved.messages[0]).toMatchObject({ groupId, playerId, body: payload.input.playerMessage });
+    expect(saved.receipts[0].status).toBe("completed");
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(log).not.toHaveBeenCalled();
+    const downstream = JSON.stringify({ state: saved, claim: claim.mock.calls, consult: consult.mock.calls, complete: complete.mock.calls });
+    for (const value of ["other-sender", "1000000002", "other-agent", "other-character", "other-conversation", "fixture-private-extra", secondPlayerId, otherGroupId]) expect(downstream).not.toContain(value);
+  });
+
+  it.each([
+    [{ channel: "telegram", userId: "fixture-user-one" }, "invalid_phone"],
+    [{ phone: "fixture-user-one", transport: "telegram" }, "invalid_channel"],
+    [{ phone: 123, channel: "telegram", senderId: "fixture-user-one" }, "invalid_phone"],
+    [{ phone: "fixture-user-one", channel: { name: "telegram" } }, "invalid_channel"],
+  ] as const)("does not substitute metadata for required phone/channel %#", async (context, reason) => {
+    const { send, consult, state } = await setup();
+    const response = await send(request({ ...payload, context }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid request", reason });
+    expect(consult).not.toHaveBeenCalled();
+    expect((await state()).messages).toHaveLength(0);
   });
 });
 
@@ -264,8 +315,6 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
 
   it.each([
     { ...payload, playerId: "other" },
-    { ...payload, context: { ...payload.context, senderId: "other" } },
-    { ...payload, context: { ...payload.context, botId: "1000000002" } },
     { ...payload, context: { phone: "", channel: "telegram" } },
     { ...payload, context: { phone: "x".repeat(257), channel: "telegram" } },
     { ...payload, context: { ...payload.context, channel: "x".repeat(65) } },
@@ -469,7 +518,7 @@ describe("demo ingress with fake hosted transport and real deterministic RAVO co
     vi.stubEnv("KEIKI_DEMO_AGENT_ID", "demo-agent");
     vi.stubEnv("KEIKI_DEMO_LINE_ID", "1");
     vi.stubEnv("KEIKI_DEMO_TELEGRAM_BOT_ID", telegramBotId);
-    const req = request();
+    const req = request({ ...payload, context: { ...payload.context, metadata: { providerExtension: "fixture-private-extra" } } });
     const init = { method: "POST", headers: req.headers, body: await req.text() };
     const response = await t.fetch(`/keiki/consult${toolQuery}`, init);
     expect(response.status).toBe(200);
