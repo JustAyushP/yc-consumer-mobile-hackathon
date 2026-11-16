@@ -16,11 +16,9 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => handleConsult(request, {
     enabled: process.env.KEIKI_DEMO_INGRESS_ENABLED,
-    apiKey: process.env.KEIKI_TOOL_API_KEY,
     agentId: process.env.KEIKI_DEMO_AGENT_ID,
     lineId: process.env.KEIKI_DEMO_LINE_ID,
     telegramBotId: process.env.KEIKI_DEMO_TELEGRAM_BOT_ID,
-    diagnosticToolKeyReference: process.env.KEIKI_DIAGNOSTIC_TOOL_KEY_REFERENCE,
   }, {
     claim: (args) => ctx.runMutation(internal.chat.keikiIngress.claim, args),
     consult: (args) => ctx.runAction(internal.ravo.consult.consult, args),

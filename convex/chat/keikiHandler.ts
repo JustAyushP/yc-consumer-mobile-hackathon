@@ -36,11 +36,9 @@ export type Dependencies = {
 
 export type DemoConfig = {
   enabled?: string;
-  apiKey?: string;
   agentId?: string;
   lineId?: string;
   telegramBotId?: string;
-  diagnosticToolKeyReference?: string;
 };
 
 function json(value: unknown, status: number) {
@@ -52,19 +50,6 @@ function json(value: unknown, status: number) {
 
 export function disabledTurn() {
   return json({ error: "Keiki external harness is disabled" }, 503);
-}
-
-async function constantTimeEqual(actual: string, expected: string) {
-  const encode = new TextEncoder();
-  const [left, right] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encode.encode(actual)),
-    crypto.subtle.digest("SHA-256", encode.encode(expected)),
-  ]);
-  const a = new Uint8Array(left);
-  const b = new Uint8Array(right);
-  let different = 0;
-  for (let i = 0; i < a.length; i++) different |= a[i] ^ b[i];
-  return different === 0;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -80,21 +65,8 @@ function nonempty(value: unknown): value is string {
 }
 
 export async function handleConsult(request: Request, config: DemoConfig, deps: Dependencies): Promise<Response> {
-  if (config.enabled !== "true" || !nonempty(config.apiKey) || !nonempty(config.agentId) || config.lineId !== "1" || !config.telegramBotId || !/^\d{1,20}$/.test(config.telegramBotId)) {
+  if (config.enabled !== "true" || !nonempty(config.agentId) || config.lineId !== "1" || !config.telegramBotId || !/^\d{1,20}$/.test(config.telegramBotId)) {
     return json({ error: "Keiki demo ingress is disabled or unconfigured" }, 503);
-  }
-  const key = request.headers.get("X-Orchid-Api-Key");
-  if (!key || !(await constantTimeEqual(key, config.apiKey))) {
-    const present = Object.fromEntries(
-      ["x-orchid-api-key", "x-orchid-trace-id", "x-orchid-internal", "authorization", "x-orchid-signature", "x-orchid-timestamp", "x-keiki-signature", "x-keiki-timestamp", "x-signature", "x-hub-signature-256", "content-type"]
-        .map((name) => [name, request.headers.has(name)]),
-    );
-    const reference = config.diagnosticToolKeyReference;
-    const comparison = typeof reference === "string" && reference.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reference)
-      ? { presentedKeyMatchesToolReference: key !== null && key !== "" && await constantTimeEqual(key, reference) }
-      : {};
-    console.log("keiki-consult-auth-rejected", JSON.stringify({ present, ...comparison }));
-    return json({ error: "Unauthorized" }, 401);
   }
   if (request.headers.has("X-Orchid-Internal")) return json({ error: "Dashboard turns are not supported" }, 403);
   const url = new URL(request.url);
