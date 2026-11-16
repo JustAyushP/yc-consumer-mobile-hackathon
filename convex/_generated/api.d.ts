@@ -21,6 +21,7 @@ import type * as chat_harness from "../chat/harness.js";
 import type * as chat_keikiHandler from "../chat/keikiHandler.js";
 import type * as chat_keikiIngress from "../chat/keikiIngress.js";
 import type * as chat_messages from "../chat/messages.js";
+import type * as chat_story from "../chat/story.js";
 import type * as crons from "../crons.js";
 import type * as game_accuse from "../game/accuse.js";
 import type * as game_catalog from "../game/catalog.js";
@@ -90,6 +91,7 @@ declare const fullApi: ApiFromModules<{
   "chat/keikiHandler": typeof chat_keikiHandler;
   "chat/keikiIngress": typeof chat_keikiIngress;
   "chat/messages": typeof chat_messages;
+  "chat/story": typeof chat_story;
   crons: typeof crons;
   "game/accuse": typeof game_accuse;
   "game/catalog": typeof game_catalog;

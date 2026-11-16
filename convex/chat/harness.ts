@@ -30,8 +30,8 @@ export const thread = query({
   handler: async (ctx, { viewerToken, lineId }) => {
     const { player } = await requireViewer(ctx, viewerToken);
     const rows = await ctx.db.query("messages").withIndex("by_player_agent", (q) => q.eq("playerId", player._id)).collect();
-    return rows.filter((m) => m.kind === "chat" && m.lineId === lineId).sort((a, b) => a._creationTime - b._creationTime).slice(-100)
-      .map((m) => ({ id: m._id, fromPlayer: m.source !== "ravo", body: m.body, at: m._creationTime }));
+    return rows.filter((m) => (m.kind === "chat" || m.kind === "notice") && m.lineId === lineId).sort((a, b) => a._creationTime - b._creationTime).slice(-100)
+      .map((m) => ({ id: m._id, fromPlayer: m.source !== "ravo", system: m.kind === "notice", body: m.body, at: m._creationTime }));
   },
 });
 
@@ -57,6 +57,7 @@ export const send = action({
   args: { viewerToken: v.string(), lineId: vLine, text: v.string() },
   handler: async (ctx, { viewerToken, lineId, text }): Promise<string> => {
     const { groupId, playerId, messageId }: { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages"> } = await ctx.runMutation(internal.chat.harness.ingest, { viewerToken, lineId, text });
+    await ctx.runAction(internal.ravo.actor.judge, { messageId }).catch(() => null);
     let directive: RavoDirective;
     try {
       directive = await ctx.runAction(internal.ravo.consult.consult, { groupId, playerId, messageId, lineId, agentKey: lineId === "1" ? "common" : undefined });
@@ -64,7 +65,7 @@ export const send = action({
       await ctx.runMutation(internal.chat.harness.saveReply, { groupId, playerId, lineId, body: FAILED });
       return FAILED;
     }
-    const memory: string = await ctx.runQuery(internal.chat.messages.sharedMemory, { playerId, messageId });
+    const memory: string = await ctx.runQuery(internal.chat.story.characterContext, { playerId, messageId, agentKey: directive.character.agentKey });
     const reply: string = await ctx.runAction(internal.ravo.actor.act, { directiveJson: JSON.stringify(directive), memory, message: text.trim().slice(0, 2000) });
     await ctx.runMutation(internal.chat.harness.saveReply, { groupId, playerId, lineId, agentKey: directive.character.agentKey, body: reply });
     return reply;

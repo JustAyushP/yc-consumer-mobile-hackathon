@@ -58,7 +58,7 @@ function Conversation({ token }: { token: string }) {
     <ScrollView ref={scroll} style={styles.fill} contentContainerStyle={styles.list}>
       {messages === undefined ? <ActivityIndicator color={colors.amber} />
         : messages.length === 0 ? <Text style={ui.small}>Say something to {active?.name ?? "them"}. Everyone in the lounge hears what you tell the others.</Text>
-        : messages.map((m) => <View key={m.id} style={[styles.bubble, m.fromPlayer ? styles.mine : styles.theirs]}>
+        : messages.map((m) => m.system ? <Text key={m.id} style={styles.system}>{m.body}</Text> : <View key={m.id} style={[styles.bubble, m.fromPlayer ? styles.mine : styles.theirs]}>
           {!m.fromPlayer ? <Text style={ui.eyebrow}>{active?.name?.toUpperCase()}</Text> : null}
           <Text style={[styles.body, m.fromPlayer && styles.mineText]}>{m.body}</Text>
         </View>)}
@@ -87,6 +87,7 @@ const styles = StyleSheet.create({
   theirs: { alignSelf: "flex-start", backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line },
   body: { fontFamily: fonts.body, color: colors.text, fontSize: 14, lineHeight: 20 },
   mineText: { color: colors.ink },
+  system: { alignSelf: "center", textAlign: "center", fontFamily: fonts.typewriter, color: colors.amber, fontSize: 12, lineHeight: 18, paddingHorizontal: 12 },
   composer: { flexDirection: "row", gap: 8, paddingVertical: 10, alignItems: "flex-end" },
   input: { flex: 1, minHeight: 44, maxHeight: 120, borderWidth: 1, borderColor: colors.line, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, fontFamily: fonts.body, fontSize: 14, backgroundColor: colors.surface },
   send: { height: 44, paddingHorizontal: 16, borderRadius: 12, backgroundColor: colors.amber, justifyContent: "center" },

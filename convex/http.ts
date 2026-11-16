@@ -25,7 +25,8 @@ http.route({
     consult: (args) => ctx.runAction(internal.ravo.consult.consult, args),
     complete: (receiptId, directiveJson) => ctx.runMutation(internal.chat.keikiIngress.complete, { receiptId, directiveJson }),
     uncertain: (receiptId) => ctx.runMutation(internal.chat.keikiIngress.uncertain, { receiptId }),
-    memory: (args) => ctx.runQuery(internal.chat.messages.sharedMemory, args),
+    memory: (args) => ctx.runQuery(internal.chat.story.characterContext, args),
+    judge: (messageId) => ctx.runAction(internal.ravo.actor.judge, { messageId }),
   })),
 });
 

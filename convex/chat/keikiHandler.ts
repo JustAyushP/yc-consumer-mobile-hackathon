@@ -32,7 +32,8 @@ export type Dependencies = {
   }) => Promise<RavoDirective>;
   complete: (receiptId: Id<"keikiReceipts">, directiveJson: string) => Promise<unknown>;
   uncertain: (receiptId: Id<"keikiReceipts">) => Promise<unknown>;
-  memory?: (args: { playerId: Id<"players">; messageId: Id<"messages"> }) => Promise<string>;
+  memory?: (args: { playerId: Id<"players">; messageId: Id<"messages">; agentKey: string }) => Promise<string>;
+  judge?: (messageId: Id<"messages">) => Promise<unknown>;
 };
 
 export type DemoConfig = {
@@ -124,11 +125,12 @@ export async function handleConsult(request: Request, config: DemoConfig, deps: 
     return json({ error: "Completed trace requires current directive authorization; no automatic retry" }, 409);
   }
   if (claim.status !== "claimed") return json({ error: "Demo trace already claimed; no automatic retry" }, 409);
+  if (deps.judge) await deps.judge(claim.messageId).catch(() => null);
   try {
     const directive = await deps.consult({ groupId: claim.groupId, playerId: claim.playerId, messageId: claim.messageId, lineId: transport.lineId, agentKey: transport.lineId === "1" ? "common" : undefined });
     const directiveJson = JSON.stringify(directive);
     await deps.complete(claim.receiptId, directiveJson);
-    const memory = deps.memory ? await deps.memory({ playerId: claim.playerId, messageId: claim.messageId }).catch(() => "") : "";
+    const memory = deps.memory ? await deps.memory({ playerId: claim.playerId, messageId: claim.messageId, agentKey: directive.character.agentKey }).catch(() => "") : "";
     return json(memory ? { ...directive, guidance: `${directive.guidance}\n${memory}` } : directive, 200);
   } catch {
     try {

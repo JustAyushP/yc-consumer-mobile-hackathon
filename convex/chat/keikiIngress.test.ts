@@ -554,7 +554,7 @@ describe("demo ingress with fake hosted transport and real deterministic RAVO co
       messageId: saved.messages[0]._id,
       lineId: "1",
       agentKey: "common",
-      directiveJson: JSON.stringify(directive),
+      directiveJson: saved.receipts[0].directiveJson!,
     })).toEqual({ authorized: true });
   });
 

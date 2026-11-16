@@ -22,3 +22,15 @@ export const bindTelegram = internalMutation({
     return { playerId: player._id, bound };
   },
 });
+
+/** Dev demo: deactivate every Telegram binding in a group. */
+export const unbindGroup = internalMutation({
+  args: { joinCode: v.string() },
+  handler: async (ctx, { joinCode }) => {
+    const group = await ctx.db.query("groups").withIndex("by_joinCode", (q) => q.eq("joinCode", joinCode.trim().toUpperCase())).first();
+    if (!group) throw new Error("No group with join code " + joinCode);
+    let count = 0;
+    for (const row of await ctx.db.query("keikiBindings").collect()) if (row.groupId === group._id && row.active) { await ctx.db.patch(row._id, { active: false }); count++; }
+    return count;
+  },
+});
