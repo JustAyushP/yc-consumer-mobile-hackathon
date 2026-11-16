@@ -106,6 +106,7 @@ export default defineSchema({
     solvedDay: v.optional(v.number()),
     ravoThreadId: v.optional(v.string()),
     dailyTurnLimit: v.optional(v.number()),
+    demoOnboarding: v.optional(v.boolean()),
   }).index("by_joinCode", ["joinCode"]).index("by_status", ["status"]),
 
   players: defineTable({
@@ -306,7 +307,40 @@ export default defineSchema({
     playerId: v.id("players"),
     groupId: v.id("groups"),
     active: v.boolean(),
-  }).index("by_transport", ["agentId", "channel", "conversationId", "senderId", "lineId"]),
+  }).index("by_transport", ["agentId", "channel", "conversationId", "senderId", "lineId"])
+    .index("by_player_line_active", ["playerId", "lineId", "active"]),
+
+  pendingPlayerLinks: defineTable({
+    tokenHash: v.string(),
+    groupId: v.id("groups"),
+    playerId: v.id("players"),
+    agentId: v.string(),
+    botId: v.string(),
+    lineId: v.literal("1"),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
+    bindingId: v.optional(v.id("keikiBindings")),
+  }).index("by_token_hash", ["tokenHash"]),
+
+  demoOnboardingSessions: defineTable({
+    sessionHash: v.string(),
+    expiresAt: v.number(),
+    failedJoins: v.number(),
+    payloadHash: v.optional(v.string()),
+    groupId: v.optional(v.id("groups")),
+    playerId: v.optional(v.id("players")),
+    linkId: v.optional(v.id("pendingPlayerLinks")),
+    viewerId: v.optional(v.id("viewerTokens")),
+  }).index("by_session_hash", ["sessionHash"]),
+
+  demoOnboardingBudget: defineTable({
+    key: v.literal("demo"),
+    day: v.number(),
+    sessions: v.number(),
+    groups: v.number(),
+    hour: v.number(),
+    hourlySessions: v.number(),
+  }).index("by_key", ["key"]),
 
   keikiReceipts: defineTable({
     eventKey: v.string(),
