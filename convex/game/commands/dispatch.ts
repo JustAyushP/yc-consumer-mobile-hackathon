@@ -58,6 +58,7 @@ export const dispatch = internalMutation({
     if (message.intakeCaseId !== args.caseId || message.intakeDay !== args.day || group.caseId !== args.caseId ||
         !Number.isInteger(args.day) || projectedDay(group) !== args.day) throw new Error("Stale or missing intake context");
     if (group.status !== "lobby" && group.dayOpenedAt !== undefined && !group.gameTimeOffsetMs && projectedDay(group) === group.day && message._creationTime < group.dayOpenedAt) throw new Error("Message predates the current day");
+    if (args.command.kind === "accusation" && (args.lineId !== "1" || message.agentKey !== COMMON_CHARACTER.agentKey)) throw new Error("Make accusations in the common conversation");
 
     const receipts = await ctx.db.query("commandReceipts").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect();
     if (receipts.length > 1) throw new Error("Ambiguous command receipt");

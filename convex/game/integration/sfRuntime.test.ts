@@ -7,9 +7,10 @@ import type { Id } from "../../_generated/dataModel";
 import schema from "../../schema";
 import { SF_CASE_CANDIDATE, SF_CONTENT_REVISION } from "../../cases/sfCandidate";
 import { settleScheduled } from "../testScheduler.support";
+import { sfInvitation } from "./sfInvitations";
 
 const install = makeFunctionReference<"mutation", Record<string, never>, Id<"cases">>("cases/installSf:installIsolatedSf");
-const dispatch = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; lineId: "1"; caseId: Id<"cases">; day: number; command: unknown }, { kind: string; value: unknown }>("game/commands/dispatch:dispatch");
+const dispatch = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; lineId: "1" | "2" | "3"; caseId: Id<"cases">; day: number; command: unknown }, { kind: string; value: unknown }>("game/commands/dispatch:dispatch");
 const recover = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; insightKey: string; text: string }, { credited: boolean }>("game/integration/recoverDeduction:recoverDeduction");
 const solved = makeFunctionReference<"query", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; lineId: string }, { correct: true; reveal: string[] } | null>("game/integration/results:solvedResult");
 let active: ReturnType<typeof convexTest<typeof schema.tables>> | undefined;
@@ -50,6 +51,7 @@ it("runs the isolated SF case through seven flexible segments with three private
   };
   const start = await talk(players[0]);
   expect(start.guidance).toContain("The drawer is open");
+  expect(start.guidance).toContain(sfInvitation(1, "forensic", 0));
   expect(start.guidance).not.toContain("Ledger B");
   for (const suspectKey of ["s_margot", "s_leo"]) {
     const early = await message(players[0], "early accusation");
@@ -59,8 +61,10 @@ it("runs the isolated SF case through seven flexible segments with three private
   expect((await t.run(async (ctx) => ctx.db.get(groupId)))?.wrongAccusations).toBe(0);
   expect(await t.run(async (ctx) => ctx.db.query("commandReceipts").collect())).toEqual([]);
   expect((await t.query(api.game.viewer.board, { viewerToken: "sf-0" })).clues.map((clue) => clue.key).sort()).toEqual(["e_coroner", "e_glass"]);
-  await talk(players[1]);
-  expect((await talk(players[2])).guidance).toContain("Two glasses stood");
+  expect((await talk(players[1])).guidance).toContain(sfInvitation(1, "interrogator", 0));
+  const secondSegment = await talk(players[2]);
+  expect(secondSegment.guidance).toContain("Two glasses stood");
+  expect(secondSegment.guidance).toContain(sfInvitation(2, "profiler", 0));
   const hintMessage = await message(players[1], "hint");
   expect(await t.mutation(dispatch, { groupId, playerId: players[1], messageId: hintMessage, lineId: "1", caseId, day: 1, command: { kind: "hint", insightKey: "i_poison" } })).toEqual({ kind: "hint", value: true });
   expect(await t.query(api.game.viewer.hints, { viewerToken: "sf-0" })).toEqual([]);
@@ -125,6 +129,14 @@ it("runs the isolated SF case through seven flexible segments with three private
   expect((await t.run(async (ctx) => ctx.db.query("brainSegments").first()))).toMatchObject({ index: 7, completed: true });
   expect((await t.query(api.game.viewer.me, { viewerToken: "sf-0" })).role?.key).toBe("forensic");
   expect((await t.query(api.game.viewer.history, { viewerToken: "sf-0" })).length).toBeGreaterThan(0);
+  for (const lineId of ["2", "3"] as const) {
+    const privateMessage = await t.run(async (ctx) => {
+      await ctx.db.insert("casts", { groupId, playerId: players[0], lineId, agentKey: "s_leo" });
+      return await ctx.db.insert("messages", { groupId, playerId: players[0], kind: "chat", source: "keiki", lineId, agentKey: "s_leo", intakeCaseId: caseId, intakeDay: 4, body: "accusation" });
+    });
+    for (const suspectKey of ["s_margot", "s_leo"]) await expect(t.mutation(dispatch, { groupId, playerId: players[0], messageId: privateMessage, lineId, caseId, day: 4, command: { kind: "accusation", suspectKey, reasoning: "reason" } })).rejects.toThrow("Make accusations in the common conversation");
+  }
+  expect(await t.run(async (ctx) => ctx.db.get(groupId))).toMatchObject({ status: "active", wrongAccusations: 0 });
   const accusationMessage = await message(players[0], "accusation");
   expect(await t.mutation(dispatch, { groupId, playerId: players[0], messageId: accusationMessage, lineId: "1", caseId, day: 4, command: { kind: "accusation", suspectKey: "s_margot", reasoning: "The records connect the evidence." } })).toEqual({ kind: "accusation", value: { correct: true } });
   expect(await t.query(solved, { groupId, playerId: players[0], messageId: accusationMessage, lineId: "1" })).toEqual({ correct: true, reveal: SF_CASE_CANDIDATE.reveal });
@@ -135,6 +147,39 @@ it("runs the isolated SF case through seven flexible segments with three private
   expect(await t.query(solved, { groupId, playerId: players[0], messageId: accusationMessage, lineId: "1" })).toBeNull();
   expect(await t.query(api.game.viewer.reveal, { viewerToken: "sf-2" })).toBeNull();
   expect(JSON.stringify(await t.query(api.game.viewer.story, { viewerToken: "sf-2" }))).not.toContain(SF_CASE_CANDIDATE.reveal[0]);
+});
+
+it("offers every role a distinct optional focus in each segment", () => {
+  for (let segment = 1; segment <= 7; segment++) {
+    const invitations = (["forensic", "interrogator", "profiler", "archivist"] as const).map((role) => sfInvitation(segment, role, 0));
+    expect(new Set(invitations).size).toBe(4);
+    expect(sfInvitation(segment, "forensic", 1)).toContain("Independently check an alternative interpretation");
+    expect(sfInvitation(segment, "forensic", 1)).not.toEqual(invitations[0]);
+  }
+  expect(() => sfInvitation(8, "forensic", 0)).toThrow("Invalid SF segment");
+});
+
+it("reuses a recovery admission below the optional daily limit", async () => {
+  vi.useFakeTimers();
+  const t = convexTest(schema, import.meta.glob("/convex/**/*.{ts,js}")); active = t;
+  const caseId = await t.mutation(install, {});
+  const { groupId, player } = await t.run(async (ctx) => {
+    const groupId = await ctx.db.insert("groups", { name: "Team", joinCode: "SF004", caseId, status: "lobby", day: 0, progress: 0, wrongAccusations: 0 });
+    const player = await ctx.db.insert("players", { groupId, name: "One", roleKey: "forensic", joinedDay: 0, lateJoiner: false });
+    await ctx.db.insert("players", { groupId, name: "Two", roleKey: "interrogator", joinedDay: 0, lateJoiner: false });
+    await ctx.db.insert("players", { groupId, name: "Three", roleKey: "profiler", joinedDay: 0, lateJoiner: false });
+    return { groupId, player };
+  });
+  await t.mutation(internal.game.groups.start, { playerId: player });
+  const makeMessage = async () => await t.run(async (ctx) => ctx.db.insert("messages", { groupId, playerId: player, kind: "chat", source: "keiki", lineId: "1", agentKey: "common", intakeCaseId: caseId, intakeDay: 1, body: "inspect" }));
+  await t.action(internal.ravo.consult.consult, { groupId, playerId: player, messageId: await makeMessage(), lineId: "1", agentKey: "common" });
+  await t.run(async (ctx) => ctx.db.patch(groupId, { dailyTurnLimit: 2 }));
+  const messageId = await makeMessage();
+  expect(await t.mutation(recover, { groupId, playerId: player, messageId, insightKey: "i_poison", text: "Digitalis poisoned the bourbon" })).toEqual({ credited: true });
+  const turns = async () => (await t.run(async (ctx) => ctx.db.query("brainDailyTurns").withIndex("by_player_day", (q) => q.eq("playerId", player).eq("day", 1)).unique()))?.turns;
+  expect(await turns()).toBe(1);
+  await t.action(internal.ravo.consult.consult, { groupId, playerId: player, messageId, lineId: "1", agentKey: "common" });
+  expect(await turns()).toBe(1);
 });
 
 it("withholds future segment evidence and rejects a changed SF revision", async () => {

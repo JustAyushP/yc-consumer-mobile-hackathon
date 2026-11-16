@@ -10,6 +10,7 @@ import { projectedDay } from "../engine";
 import { advanceSegment } from "./segments";
 import { verifiedSfGroup } from "./sf";
 import { SF_CONTENT_REVISION } from "../../cases/sfCandidate";
+import { sfInvitation } from "./sfInvitations";
 
 const planNext = makeFunctionReference<"mutation", { groupId: Id<"groups"> }, { version: number; beatKey: string | null }>("game/story/engine:planNext");
 const transition = makeFunctionReference<"mutation", { groupId: Id<"groups">; beatKey: string; eventKey: string; expectedVersion: number }, number>("game/story/engine:transition");
@@ -134,6 +135,7 @@ export async function processIntegratedTurn(ctx: MutationCtx, args: {
   const outcome = resolvedDefinition?.options.find((item) => item.key === resolved?.resolvedOption)?.publicLabel;
   const directive: RavoDirective = { character: { agentKey: sheet.agentKey, name: sheet.name }, guidance: `Scripted guidance (no live model):\n${privateContext}`, tone: "noir", endTurn: false, progressDelta: args.progressDelta };
   if (segment?.text) directive.guidance += `\n${segment.text}`;
+  if (content.characters.revision === SF_CONTENT_REVISION && segment && segment.index > 0 && player.roleKey && lineId === "1") directive.guidance += `\n${sfInvitation(segment.index, role, roleOrdinal)}`;
   if (!segment || (segment.active && !segment.completed)) {
     if (definition) directive.guidance += `\nDecision: ${definition.publicLabel}\n${definition.options.map((option, index) => `${index + 1}. ${option.publicLabel}`).join("\n")}`;
     else if (outcome) directive.guidance += `\nDecision result: ${outcome}`;
