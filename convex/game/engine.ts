@@ -4,6 +4,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, MutationCtx } from "../_generated/server";
 import { groupPlayers, hintsLeft, weekOf } from "./lib";
 import { vMessageKind } from "../schema";
+export { processConsult, processAnswer, applyDecision } from "./runtime";
 
 // Engine mutations: the only way game state changes. RAVO calls these, never the tables directly.
 

@@ -1,13 +1,22 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { settleScheduled } from "./testScheduler.support";
 
 const DAY = 24 * 60 * 60 * 1000;
+let activeTest: ReturnType<typeof convexTest<typeof schema.tables>> | undefined;
+let errorLog: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  vi.stubEnv("RAVO_OFFLINE", "1");
+  errorLog = vi.spyOn(console, "error");
+});
 
 async function setup() {
   const t = convexTest(schema, import.meta.glob("/convex/**/*.{ts,js}"));
+  activeTest = t;
   const ids = await t.run(async (ctx) => {
     const caseId = await ctx.db.insert("cases", { key: "case", title: "Case", setting: "Place", victim: "Victim", logline: "Case", culpritKey: "culprit", reveal: ["Solution"] });
     const groupId = await ctx.db.insert("groups", { name: "A", joinCode: "AAAAA", caseId, status: "active", day: 1, dayOpenedAt: Date.now(), progress: 0, wrongAccusations: 0 });
@@ -25,7 +34,17 @@ async function setup() {
   return { t, ...ids };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(async () => {
+  try {
+    if (activeTest) await settleScheduled(activeTest);
+    expect(errorLog).not.toHaveBeenCalled();
+  } finally {
+    activeTest = undefined;
+    errorLog.mockRestore();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  }
+});
 
 describe("game state invariants", () => {
   it("deduplicates clues, insights and warnings and enforces clue gates", async () => {

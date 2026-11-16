@@ -1,38 +1,18 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalAction, internalQuery } from "../_generated/server";
-import { COMMON_LINE } from "./casts";
-import { matchInsights } from "./scoring";
-import { RavoDirective } from "./types";
+import { authorizedReplay } from "../game/runtime";
+import { RavoDirective, vRavoDirective } from "./types";
 
-export const vRavoDirective = v.object({
-  character: v.object({ agentKey: v.string(), name: v.string() }),
-  guidance: v.string(),
-  reveal: v.optional(v.object({ clueId: v.id("clues"), text: v.string() })),
-  nextQuestion: v.optional(v.string()),
-  tone: v.optional(v.string()),
-  progressDelta: v.optional(v.number()),
-  endTurn: v.optional(v.boolean()),
-  crossPlayer: v.optional(v.string()),
-});
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
 
-export const clueByKey = internalQuery({
-  args: { groupId: v.id("groups"), clueKey: v.string() },
-  handler: async (ctx, { groupId, clueKey }) => {
-    const group = (await ctx.db.get(groupId))!;
-    return await ctx.db
-      .query("clues")
-      .withIndex("by_case", (q) => q.eq("caseId", group.caseId))
-      .filter((q) => q.eq(q.field("key"), clueKey))
-      .first();
-  },
-});
-
-/**
- * Asks RAVO how to handle one message. Deterministic stub: records any deduction the message makes,
- * unfolds clues through the engine (game.engine.unlockClue via ravo.clues.unfold), and reveals the first newly unlocked one.
- * crossPlayer only carries deductions the whole team has already made, so it never leaks a clue another player must earn.
- */
 export const consult = internalAction({
   args: {
     groupId: v.id("groups"),
@@ -40,36 +20,25 @@ export const consult = internalAction({
     messageId: v.id("messages"),
     lineId: v.string(),
     agentKey: v.optional(v.string()),
+    answerId: v.optional(v.id("answers")),
   },
   returns: vRavoDirective,
-  handler: async (ctx, { groupId, playerId, messageId, lineId, agentKey }): Promise<RavoDirective> => {
-    const message = await ctx.runQuery(internal.chat.messages.get, { messageId });
-    if (!message || message.groupId !== groupId || !["1", "2", "3"].includes(lineId) || (message.lineId !== undefined && message.lineId !== lineId)) throw new Error("Invalid conversation");
-    const who = playerId ?? message?.playerId;
-    if (!who || message.playerId !== who) throw new Error("Invalid conversation");
-    const player = await ctx.runQuery(internal.ravo.entry.player, { playerId: who });
-    if (!player || player.groupId !== groupId) throw new Error("Invalid conversation");
-    const character = await ctx.runMutation(internal.ravo.casts.assignForConsult, { playerId: who, lineId, agentKey });
-    const { group, insights, found } = await ctx.runQuery(internal.ravo.scoring.context, { groupId });
-    if (!message || group.status !== "active") return { character, guidance: "The case isn't open. Stay in character and wait.", endTurn: true };
-    const before = group.progress;
-    let opened: string[] = [];
-    for (const insightKey of matchInsights(insights, message.body).filter((k) => !found.includes(k))) {
-      await ctx.runMutation(internal.game.engine.recordInsight, { groupId, insightKey, playerId: who });
+  handler: async (ctx, args): Promise<RavoDirective> => await ctx.runMutation(internal.game.engine.processConsult, args),
+});
+
+export const authorizeCachedDirective = internalQuery({
+  args: { groupId: v.id("groups"), playerId: v.id("players"), messageId: v.id("messages"), lineId: v.string(), agentKey: v.string(), directiveJson: v.string() },
+  returns: v.object({ authorized: v.boolean() }),
+  handler: async (ctx, args) => {
+    try {
+      if (args.lineId !== "1" || args.agentKey !== "common") return { authorized: false };
+      const event = await ctx.db.query("storyEvents").withIndex("by_message", (q) => q.eq("messageId", args.messageId)).unique();
+      if (!event || event.groupId !== args.groupId || event.playerId !== args.playerId || event.lineId !== args.lineId ||
+        canonicalJson(JSON.parse(event.directiveJson)) !== canonicalJson(JSON.parse(args.directiveJson))) return { authorized: false };
+      const directive = await authorizedReplay(ctx, event);
+      return { authorized: !!directive && directive.character.agentKey === args.agentKey };
+    } catch {
+      return { authorized: false };
     }
-    opened = await ctx.runMutation(internal.ravo.clues.unfold, { groupId });
-    const now = await ctx.runQuery(internal.ravo.scoring.context, { groupId });
-    const after = now.group.progress;
-    const teamDeductions = now.insights.filter((i) => now.found.includes(i.key)).map((i) => i.label);
-    const clue = opened.length > 0 ? await ctx.runQuery(internal.ravo.consult.clueByKey, { groupId, clueKey: opened[0] }) : null;
-    return {
-      character,
-      ...(lineId === COMMON_LINE && teamDeductions.length > 0 ? { crossPlayer: `The team has established: ${teamDeductions.join("; ")}.` } : {}),
-      guidance: clue ? "The detective made a real deduction. Acknowledge it and hand over the new evidence." : "Stay in character. Nudge the detective back to the evidence without giving anything away.",
-      ...(clue ? { reveal: { clueId: clue._id, text: `${clue.name}: ${clue.summary}` } } : {}),
-      tone: "noir",
-      progressDelta: after - before,
-      endTurn: false,
-    };
   },
 });

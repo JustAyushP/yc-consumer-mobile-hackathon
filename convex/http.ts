@@ -1,27 +1,31 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { disabledTurn, handleConsult } from "./chat/keikiHandler";
 
 const http = httpRouter();
 
-const unavailable = httpAction(async () =>
-  new Response(JSON.stringify({ error: "Keiki ingress is disabled pending verified authentication" }), {
-    status: 503,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
-  }),
-);
-
-/** Keiki external-harness webhook. Builder 2: verify the Ed25519 signature, map the conversation to a group, save the message, call ravo.onMessage, return RAVO's reply. */
 http.route({
   path: "/keiki/turn",
   method: "POST",
-  handler: unavailable,
+  handler: httpAction(async () => disabledTurn()),
 });
 
-/** Tool endpoint for Keiki-hosted characters: body { groupId, playerId?, messageId, lineId, agentKey? } -> RavoDirective. Builder 2: add signature verification. */
 http.route({
   path: "/keiki/consult",
   method: "POST",
-  handler: unavailable,
+  handler: httpAction(async (ctx, request) => handleConsult(request, {
+    enabled: process.env.KEIKI_DEMO_INGRESS_ENABLED,
+    apiKey: process.env.KEIKI_TOOL_API_KEY,
+    agentId: process.env.KEIKI_DEMO_AGENT_ID,
+    lineId: process.env.KEIKI_DEMO_LINE_ID,
+    telegramBotId: process.env.KEIKI_DEMO_TELEGRAM_BOT_ID,
+  }, {
+    claim: (args) => ctx.runMutation(internal.chat.keikiIngress.claim, args),
+    consult: (args) => ctx.runAction(internal.ravo.consult.consult, args),
+    complete: (receiptId, directiveJson) => ctx.runMutation(internal.chat.keikiIngress.complete, { receiptId, directiveJson }),
+    uncertain: (receiptId) => ctx.runMutation(internal.chat.keikiIngress.uncertain, { receiptId }),
+  })),
 });
 
 export default http;
