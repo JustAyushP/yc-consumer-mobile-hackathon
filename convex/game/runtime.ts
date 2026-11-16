@@ -12,7 +12,8 @@ import { matchInsights } from "../ravo/scoring";
 import { currentGroup, projectedDay, unlockClueImpl } from "./engine";
 import { authorizeIntegratedReplay, processIntegratedTurn } from "./integration/runtime";
 import { consumeDailyTurn, dailyStatus } from "./integration/daily";
-import { initializeSfGroup } from "./integration/sf";
+import { initializeSfGroup, isSfBound, verifiedSfGroup } from "./integration/sf";
+import { sfInsightEligible } from "./integration/sfEvidence";
 import { SF_CONTENT_REVISION } from "../cases/sfCandidate";
 
 const replayCommand = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; lineId: "1" | "2" | "3"; caseId: Id<"cases">; day: number; command: Doc<"commandReceipts">["command"] }, unknown>("game/commands/dispatch:dispatch");
@@ -78,7 +79,13 @@ async function applyAnswer(ctx: MutationCtx, group: Doc<"groups">, playerId: Id<
   const insights = await ctx.db.query("insights").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
   const progress = await ctx.db.query("progress").withIndex("by_group", (q) => q.eq("groupId", group._id)).collect();
   const found = new Set(progress.map((p) => p.insightKey));
-  const hits = matchInsights(insights, answer.text).filter((key) => question.insightKeys.includes(key));
+  let hits = matchInsights(insights, answer.text).filter((key) => question.insightKeys.includes(key));
+  const caseRecord = await ctx.db.get(group.caseId);
+  if (caseRecord?.contentRevision === SF_CONTENT_REVISION || await isSfBound(ctx, group._id, group.caseId)) {
+    if (!await verifiedSfGroup(ctx, group._id, group.caseId)) throw new Error("SF story revision changed");
+    const authorized = await Promise.all(hits.map((key) => sfInsightEligible(ctx, group, key)));
+    hits = hits.filter((_, index) => authorized[index]);
+  }
   let credited = false;
   for (const key of hits) {
     if (found.has(key)) continue;

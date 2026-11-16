@@ -285,6 +285,7 @@ const segmentGraph: Graph = {
 };
 const segmentDefinitions: Segment[] = Array.from({ length: 7 }, (_, index) => ({
   index: index + 1, opening: `Opening ${index + 1}`, high: `High ${index + 1}`,
+  accusationEligible: index === 6,
   ...(index < 6 ? { nextHook: `Next hook ${index + 1}` } : {}),
   beatKeys: [`beat${index + 1}`], factKeys: index === 0 ? ["public"] : ["public", "private"], questionKeys: [], abilityTargets: [],
   entry: { beats: index ? [`beat${index}`] : [], insights: [], clues: [], flags: {} },

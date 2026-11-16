@@ -19,6 +19,7 @@ export const claimAndDispatchFixture = internalMutation({
       ctx.db.query("brainFixtures").withIndex("by_group", (q) => q.eq("groupId", args.groupId)).unique(),
     ]);
     if (!group || !player || player.groupId !== group._id || !fixture || fixture.caseId !== group.caseId || group.status !== "active") throw new Error("Invalid fixture caller");
+    if (!(await ctx.db.get(group.caseId))?.key.startsWith("fixture-")) throw new Error("Fixture case required");
     const cast = args.lineId === "1" ? null : await ctx.db.query("casts").withIndex("by_player_line", (q) => q.eq("playerId", player._id).eq("lineId", args.lineId)).unique();
     if (args.lineId !== "1" && (!cast || cast.groupId !== group._id)) throw new Error("Character must enter on an earlier turn");
     const day = projectedDay(group);
@@ -37,6 +38,7 @@ export const claimAndVoteFixture = internalMutation({
       ctx.db.query("brainFixtures").withIndex("by_group", (q) => q.eq("groupId", args.groupId)).unique(),
     ]);
     if (!group || group.status !== "active" || !player || player.groupId !== group._id || !fixture || fixture.caseId !== group.caseId) throw new Error("Invalid fixture caller");
+    if (!(await ctx.db.get(group.caseId))?.key.startsWith("fixture-")) throw new Error("Fixture case required");
     const optionKey = await ctx.runQuery(optionKeyForIndex, { groupId: args.groupId, playerId: args.playerId, decisionId: args.decisionId, optionIndex: args.optionIndex });
     const messageId = await ctx.db.insert("messages", { groupId: group._id, playerId: player._id, source: "keiki", kind: "chat", body: "", lineId: "1", agentKey: "common", intakeCaseId: group.caseId, intakeDay: projectedDay(group) });
     const version = await ctx.runMutation(vote, { groupId: group._id, playerId: player._id, decisionId: args.decisionId, optionKey, eventKey: `fixture-vote:${messageId}`, expectedVersion: args.expectedVersion });

@@ -43,7 +43,7 @@ export const installFixtureSegments = internalMutation({
     const seen = new Set<string>();
     if (definitions.length !== 7 || allBeats.length !== beats.length || !unique(allBeats) || beats.some((key) => !positions.has(key)) || beats.some((key, index) => index > 0 && positions.get(beats[index - 1])! > positions.get(key)!)) throw new Error("Invalid segment beat coverage");
     for (const [i, definition] of definitions.entries()) {
-      if (definition.index !== i + 1 || !safeText(definition.opening) || !safeText(definition.high) || (i < 6 ? !safeText(definition.nextHook) : definition.nextHook !== undefined) ||
+      if (definition.index !== i + 1 || definition.accusationEligible !== (i === 6) || !safeText(definition.opening) || !safeText(definition.high) || (i < 6 ? !safeText(definition.nextHook) : definition.nextHook !== undefined) ||
         !unique(definition.beatKeys) || !unique(definition.factKeys) || !unique(definition.questionKeys) || !unique(definition.abilityTargets) ||
         definition.factKeys.some((key) => !content.characters.facts.some((fact) => fact.key === key)) ||
         definition.questionKeys.some((key) => !questions.some((question) => question.key === key)) ||

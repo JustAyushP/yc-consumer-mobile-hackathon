@@ -6,6 +6,9 @@ import { groupPlayers, hintsLeft, weekOf } from "./lib";
 import { vMessageKind } from "../schema";
 import { consumeDailyTurn } from "./integration/daily";
 import { segmentAccess } from "./integration/access";
+import { isSfBound, verifiedSfGroup } from "./integration/sf";
+import { sfInsightEligible } from "./integration/sfEvidence";
+import { SF_CONTENT_REVISION } from "../cases/sfCandidate";
 export { processConsult, processAnswer, applyDecision } from "./runtime";
 
 // Engine mutations: the only way game state changes. RAVO calls these, never the tables directly.
@@ -80,6 +83,8 @@ export const recordInsight = internalMutation({
     if (found.some((p) => p.insightKey === insightKey)) return false;
     const insights = await ctx.db.query("insights").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
     if (!insights.some((i) => i.key === insightKey)) return false;
+    const caseRecord = await ctx.db.get(group.caseId);
+    if ((caseRecord?.contentRevision === SF_CONTENT_REVISION || await isSfBound(ctx, groupId, group.caseId)) && (!await verifiedSfGroup(ctx, groupId, group.caseId) || !await sfInsightEligible(ctx, group, insightKey))) return false;
     if (playerId) await consumeDailyTurn(ctx, group, playerId);
     await ctx.db.insert("progress", { groupId, insightKey, playerId, day: group.day });
     const keys = new Set([...found.map((f) => f.insightKey), insightKey]);

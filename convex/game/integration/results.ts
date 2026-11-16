@@ -2,6 +2,8 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../../_generated/server";
 import { makeFunctionReference } from "convex/server";
 import type { Id } from "../../_generated/dataModel";
+import { SF_CONTENT_REVISION } from "../../cases/sfCandidate";
+import { isSfBound, verifiedSfGroup } from "./sf";
 
 const processAnswer = makeFunctionReference<"mutation", { answerId: Id<"answers"> }, null>("game/engine:processAnswer");
 
@@ -41,6 +43,7 @@ export const solvedResult = internalQuery({
       receipt.command.kind !== "accusation" || receipt.result.kind !== "accusation" || !receipt.result.value.correct) return null;
     const caseRecord = await ctx.db.get(group.caseId);
     if (!caseRecord || receipt.command.suspectKey !== caseRecord.culpritKey) return null;
+    if ((caseRecord.contentRevision === SF_CONTENT_REVISION || await isSfBound(ctx, group._id, group.caseId)) && !await verifiedSfGroup(ctx, group._id, group.caseId)) return null;
     return { correct: true as const, reveal: caseRecord.reveal };
   },
 });

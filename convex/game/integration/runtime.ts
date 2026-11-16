@@ -30,7 +30,7 @@ async function entitlement(ctx: QueryCtx, event: { groupId: Id<"groups">; player
   const caseRecord = await ctx.db.get(group.caseId);
   const content = JSON.parse(fixture.contentJson) as FixtureContent;
   if (!caseRecord || caseRecord.key !== content.characters.caseKey) return null;
-  if (caseRecord.contentRevision === SF_CONTENT_REVISION && !await verifiedSfGroup(ctx, group._id, group.caseId)) return null;
+  if ((caseRecord.contentRevision === SF_CONTENT_REVISION || content.characters.revision === SF_CONTENT_REVISION) && !await verifiedSfGroup(ctx, group._id, group.caseId)) return null;
   if (event.lineId !== "1") {
     const sheet = content.characters.characters.find((item) => item.agentKey === recipient.agentKey);
     const suspects = await ctx.db.query("suspects").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();

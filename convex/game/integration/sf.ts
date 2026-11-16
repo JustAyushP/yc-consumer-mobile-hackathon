@@ -9,6 +9,15 @@ import type { FixtureContent } from "./fixtures";
 const initialize = makeFunctionReference<"mutation", { groupId: Id<"groups">; graph: typeof SF_STORY_GRAPH_CANDIDATE }, Id<"storyInstances">>("game/story/engine:initialize");
 const installSegments = makeFunctionReference<"mutation", { groupId: Id<"groups">; definitions: typeof SF_SEGMENTS }, null>("game/integration/segments:installFixtureSegments");
 
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).filter((key) => record[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 export async function verifiedSfCase(ctx: QueryCtx, caseId: Id<"cases">) {
   const [record, suspects, clues, insights, days, questions] = await Promise.all([
     ctx.db.get(caseId), ctx.db.query("suspects").withIndex("by_case", (q) => q.eq("caseId", caseId)).collect(),
@@ -39,6 +48,13 @@ function sfContent(): FixtureContent {
     nudges: ["Review the evidence already available, and say what remains uncertain."] };
 }
 
+export async function isSfBound(ctx: QueryCtx, groupId: Id<"groups">, caseId: Id<"cases">) {
+  const [caseRecord, fixture] = await Promise.all([
+    ctx.db.get(caseId), ctx.db.query("brainFixtures").withIndex("by_group", (q) => q.eq("groupId", groupId)).unique(),
+  ]);
+  return caseRecord?.contentRevision === SF_CONTENT_REVISION || (fixture !== null && (JSON.parse(fixture.contentJson) as FixtureContent).characters.revision === SF_CONTENT_REVISION);
+}
+
 export async function verifiedSfGroup(ctx: QueryCtx, groupId: Id<"groups">, caseId: Id<"cases">) {
   if (!await verifiedSfCase(ctx, caseId)) return false;
   const [existing, instance, segments] = await Promise.all([
@@ -47,7 +63,7 @@ export async function verifiedSfGroup(ctx: QueryCtx, groupId: Id<"groups">, case
     ctx.db.query("brainSegments").withIndex("by_group", (q) => q.eq("groupId", groupId)).unique(),
   ]);
   return !!existing && existing.caseId === caseId && existing.contentJson === JSON.stringify(sfContent()) && !!instance && instance.caseId === caseId &&
-    JSON.stringify(instance.graph) === JSON.stringify(SF_STORY_GRAPH_CANDIDATE) && !!segments && segments.caseId === caseId && JSON.stringify(segments.definitions) === JSON.stringify(SF_SEGMENTS);
+    canonical(instance.graph) === canonical(SF_STORY_GRAPH_CANDIDATE) && !!segments && segments.caseId === caseId && canonical(segments.definitions) === canonical(SF_SEGMENTS);
 }
 
 export async function initializeSfGroup(ctx: MutationCtx, groupId: Id<"groups">, caseId: Id<"cases">) {

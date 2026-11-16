@@ -41,6 +41,7 @@ export const caseFile = query({
   args: { viewerToken: v.string() },
   handler: async (ctx, { viewerToken }) => {
     const { group } = await requireViewer(ctx, viewerToken);
+    await segmentAccess(ctx, group);
     const kase = (await ctx.db.get(group.caseId))!;
     const suspects = await ctx.db.query("suspects").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
     return {
@@ -72,7 +73,7 @@ export const board = query({
         return { key: c.key, name: c.name, kind: c.kind, summary: c.summary, day: u.day };
       }),
       deductions: found.filter((f) => !segment || visibleInsights.has(f.insightKey)).map((f) => ({ key: f.insightKey, label: insights.find((i) => i.key === f.insightKey)?.label ?? f.insightKey, day: f.day })),
-      myFindings: sessions.filter((s) => s.abilityResult).map((s) => ({ day: s.day, target: s.abilityTarget!, result: s.abilityResult! })),
+      myFindings: sessions.filter((s) => s.abilityResult && (!segment || (s.abilityTarget !== undefined && segment.abilityTargets.includes(s.abilityTarget)))).map((s) => ({ day: s.day, target: s.abilityTarget!, result: s.abilityResult! })),
     };
   },
 });
@@ -138,7 +139,10 @@ export const hints = query({
   handler: async (ctx, { viewerToken }) => {
     const { player, group } = await requireViewer(ctx, viewerToken);
     const rows = await ctx.db.query("hints").withIndex("by_group_week", (q) => q.eq("groupId", group._id)).collect();
-    return rows.filter((h) => h.playerId === player._id).map((h) => ({ day: h.day, week: h.week, body: h.body }));
+    const segment = await segmentAccess(ctx, group);
+    const questions = segment ? await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", group.caseId)).collect() : [];
+    const visibleInsights = new Set(questions.filter((question) => segment?.questionKeys.includes(question.key)).flatMap((question) => question.insightKeys));
+    return rows.filter((h) => h.playerId === player._id && (!segment || visibleInsights.has(h.insightKey))).map((h) => ({ day: h.day, week: h.week, body: h.body }));
   },
 });
 
@@ -163,6 +167,7 @@ export const reveal = query({
   handler: async (ctx, { viewerToken }) => {
     const { group } = await requireViewer(ctx, viewerToken);
     if (group.status !== "solved") return null;
+    await segmentAccess(ctx, group);
     const kase = (await ctx.db.get(group.caseId))!;
     const culprit = (await ctx.db.query("suspects").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect()).find((s) => s.key === kase.culpritKey);
     const solver = group.solvedBy ? await ctx.db.get(group.solvedBy) : null;

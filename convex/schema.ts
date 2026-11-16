@@ -243,6 +243,11 @@ export default defineSchema({
   brainDailyTurns: defineTable({ groupId: v.id("groups"), caseId: v.id("cases"), playerId: v.id("players"), day: v.number(), turns: v.number() })
     .index("by_player_day", ["playerId", "day"]),
 
+  brainRecoveryReceipts: defineTable({
+    messageId: v.id("messages"), groupId: v.id("groups"), caseId: v.id("cases"), playerId: v.id("players"),
+    day: v.number(), insightKey: v.string(), text: v.string(), messageBody: v.string(), credited: v.boolean(),
+  }).index("by_message", ["messageId"]),
+
   commandReceipts: defineTable({
     messageId: v.id("messages"), groupId: v.id("groups"), caseId: v.id("cases"), playerId: v.id("players"),
     lineId: v.union(v.literal("1"), v.literal("2"), v.literal("3")), day: v.number(),
