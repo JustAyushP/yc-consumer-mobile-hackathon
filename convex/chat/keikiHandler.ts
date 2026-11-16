@@ -39,6 +39,7 @@ export type DemoConfig = {
   apiKey?: string;
   agentId?: string;
   lineId?: string;
+  telegramBotId?: string;
 };
 
 function json(value: unknown, status: number) {
@@ -78,14 +79,16 @@ function nonempty(value: unknown): value is string {
 }
 
 export async function handleConsult(request: Request, config: DemoConfig, deps: Dependencies): Promise<Response> {
-  if (config.enabled !== "true" || !nonempty(config.apiKey) || !nonempty(config.agentId) || config.lineId !== "1") {
+  if (config.enabled !== "true" || !nonempty(config.apiKey) || !nonempty(config.agentId) || config.lineId !== "1" || !config.telegramBotId || !/^\d{1,20}$/.test(config.telegramBotId)) {
     return json({ error: "Keiki demo ingress is disabled or unconfigured" }, 503);
   }
   const key = request.headers.get("X-Orchid-Api-Key");
   if (!key || !(await constantTimeEqual(key, config.apiKey))) return json({ error: "Unauthorized" }, 401);
   if (request.headers.has("X-Orchid-Internal")) return json({ error: "Dashboard turns are not supported" }, 403);
   const url = new URL(request.url);
-  if (url.searchParams.getAll("lineId").length !== 1 || url.searchParams.get("lineId") !== config.lineId || [...url.searchParams.keys()].some((key) => key !== "lineId")) {
+  if (url.searchParams.getAll("lineId").length !== 1 || url.searchParams.get("lineId") !== config.lineId ||
+      url.searchParams.getAll("botId").length !== 1 || url.searchParams.get("botId") !== config.telegramBotId ||
+      [...url.searchParams.keys()].some((key) => key !== "lineId" && key !== "botId")) {
     return json({ error: "Invalid route" }, 400);
   }
   const traceId = request.headers.get("X-Orchid-Trace-Id");
@@ -108,13 +111,13 @@ export async function handleConsult(request: Request, config: DemoConfig, deps: 
       typeof input.summary !== "string" || input.summary.length > 1000 ||
       typeof input.intent !== "string" || !["theory", "question", "answer", "chat", "join"].includes(input.intent) ||
       !nonempty(context.phone) || context.phone.length > 256 ||
-      !nonempty(context.channel) || context.channel.length > 64) {
+      context.channel !== "telegram") {
     return json({ error: "Invalid request" }, 400);
   }
   const transport: Transport = {
     agentId: config.agentId,
     channel: context.channel,
-    conversationId: context.phone,
+    conversationId: JSON.stringify(["telegram", config.telegramBotId, context.phone]),
     senderId: context.phone,
     lineId: config.lineId,
   };
