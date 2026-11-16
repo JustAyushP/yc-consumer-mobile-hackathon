@@ -68,6 +68,84 @@ async function setup(realAuthorization = false) {
   return { t, ...ids, deps, consult, authorize, complete, send, state };
 }
 
+describe("fixed validation reasons without payload disclosure", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    [null, "invalid_envelope"],
+    [[], "invalid_envelope"],
+    [{ ...payload, "fixture-private-key-name": "fixture-private-value" }, "invalid_envelope"],
+    [{ context: payload.context }, "invalid_input"],
+    [{ ...payload, input: [] }, "invalid_input"],
+    [{ ...payload, input: "fixture-private-value" }, "invalid_input"],
+    [{ input: payload.input }, "invalid_context"],
+    [{ ...payload, context: null }, "invalid_context"],
+    [{ ...payload, context: [] }, "invalid_context"],
+    [{ ...payload, input: { ...payload.input, "fixture-private-key-name": "fixture-private-value" } }, "unsupported_input_fields"],
+    [{ ...payload, context: { ...payload.context, "fixture-private-key-name": "fixture-private-value" } }, "unsupported_context_fields"],
+    [{ ...payload, input: { ...payload.input, playerMessage: " " } }, "invalid_player_message"],
+    [{ ...payload, input: { ...payload.input, playerMessage: 123 } }, "invalid_player_message"],
+    [{ ...payload, input: { ...payload.input, playerMessage: "x".repeat(8001) } }, "invalid_player_message"],
+    [{ ...payload, input: { ...payload.input, summary: null } }, "invalid_summary"],
+    [{ ...payload, input: { ...payload.input, summary: "x".repeat(1001) } }, "invalid_summary"],
+    [{ ...payload, input: { ...payload.input, intent: 123 } }, "invalid_intent"],
+    [{ ...payload, input: { ...payload.input, intent: "fixture-private-value" } }, "invalid_intent"],
+    [{ ...payload, context: { ...payload.context, phone: null } }, "invalid_phone"],
+    [{ ...payload, context: { ...payload.context, phone: 123 } }, "invalid_phone"],
+    [{ ...payload, context: { ...payload.context, phone: " " } }, "invalid_phone"],
+    [{ ...payload, context: { ...payload.context, phone: "x".repeat(257) } }, "invalid_phone"],
+    [{ ...payload, context: { ...payload.context, channel: "fixture-private-value" } }, "invalid_channel"],
+    [{ ...payload, context: { ...payload.context, channel: { nested: "fixture-private-value" } } }, "invalid_channel"],
+  ] as const)("returns only a fixed reason for malformed payload %#", async (body, reason) => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, state, consult, deps } = await setup();
+    const claim = vi.spyOn(deps, "claim");
+    const before = await state();
+    const response = await send(request(body, { "X-Orchid-Api-Key": "fixture-private-value" }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid request", reason });
+    expect(log).not.toHaveBeenCalled();
+    expect(claim).not.toHaveBeenCalled();
+    expect(consult).not.toHaveBeenCalled();
+    expect(await state()).toEqual(before);
+  });
+
+  it("distinguishes invalid JSON without including the body or exception", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, state, consult } = await setup();
+    const req = request();
+    const malformed = new Request(req.url, { method: "POST", headers: req.headers, body: '{"fixture-private-value":' });
+    const response = await send(malformed);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid request", reason: "invalid_json" });
+    expect(log).not.toHaveBeenCalled();
+    expect(consult).not.toHaveBeenCalled();
+    expect((await state()).messages).toHaveLength(0);
+  });
+
+  it("returns fixed route and trace reasons without echoing supplied values", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, consult, state } = await setup();
+    const route = await send(request(payload, {}, `${toolQuery}&fixture-private-name=fixture-private-value`));
+    expect(route.status).toBe(400);
+    expect(await route.json()).toEqual({ error: "Invalid route", reason: "invalid_route" });
+    const trace = await send(request(payload, { "X-Orchid-Trace-Id": "fixture-private-value".repeat(30) }));
+    expect(trace.status).toBe(400);
+    expect(await trace.json()).toEqual({ error: "Invalid demo trace id", reason: "invalid_trace_id" });
+    expect(log).not.toHaveBeenCalled();
+    expect(consult).not.toHaveBeenCalled();
+    expect((await state()).messages).toHaveLength(0);
+  });
+
+  it("preserves internal-context rejection even with unsupported fields", async () => {
+    const { send, consult } = await setup();
+    const response = await send(request({ ...payload, context: { ...payload.context, internal: true, privateField: "fixture-private-value" } }));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Dashboard turns are not supported" });
+    expect(consult).not.toHaveBeenCalled();
+  });
+});
+
 describe("unauthenticated demo endpoint with fake transport and fake Brain", () => {
   afterEach(() => vi.restoreAllMocks());
 

@@ -73,31 +73,32 @@ export async function handleConsult(request: Request, config: DemoConfig, deps: 
   if (url.searchParams.getAll("lineId").length !== 1 || url.searchParams.get("lineId") !== config.lineId ||
       url.searchParams.getAll("botId").length !== 1 || url.searchParams.get("botId") !== config.telegramBotId ||
       [...url.searchParams.keys()].some((key) => key !== "lineId" && key !== "botId")) {
-    return json({ error: "Invalid route" }, 400);
+    return json({ error: "Invalid route", reason: "invalid_route" }, 400);
   }
   const traceId = request.headers.get("X-Orchid-Trace-Id");
-  if (!nonempty(traceId) || traceId.length > 256) return json({ error: "Invalid demo trace id" }, 400);
+  if (!nonempty(traceId) || traceId.length > 256) return json({ error: "Invalid demo trace id", reason: "invalid_trace_id" }, 400);
   let payload: unknown;
   try {
     const text = await request.text();
     if (text.length > 64000) return json({ error: "Request too large" }, 413);
     payload = JSON.parse(text);
   } catch {
-    return json({ error: "Invalid request" }, 400);
+    return json({ error: "Invalid request", reason: "invalid_json" }, 400);
   }
-  if (!record(payload) || !only(payload, ["input", "context"]) || !record(payload.input) || !record(payload.context)) {
-    return json({ error: "Invalid request" }, 400);
+  if (!record(payload) || !only(payload, ["input", "context"])) {
+    return json({ error: "Invalid request", reason: "invalid_envelope" }, 400);
   }
+  if (!record(payload.input)) return json({ error: "Invalid request", reason: "invalid_input" }, 400);
+  if (!record(payload.context)) return json({ error: "Invalid request", reason: "invalid_context" }, 400);
   const { input, context } = payload;
   if ("internal" in context) return json({ error: "Dashboard turns are not supported" }, 403);
-  if (!only(input, ["playerMessage", "summary", "intent"]) || !only(context, ["phone", "channel"]) ||
-      !nonempty(input.playerMessage) || input.playerMessage.length > 8000 ||
-      typeof input.summary !== "string" || input.summary.length > 1000 ||
-      typeof input.intent !== "string" || !["theory", "question", "answer", "chat", "join"].includes(input.intent) ||
-      !nonempty(context.phone) || context.phone.length > 256 ||
-      context.channel !== "telegram") {
-    return json({ error: "Invalid request" }, 400);
-  }
+  if (!only(input, ["playerMessage", "summary", "intent"])) return json({ error: "Invalid request", reason: "unsupported_input_fields" }, 400);
+  if (!only(context, ["phone", "channel"])) return json({ error: "Invalid request", reason: "unsupported_context_fields" }, 400);
+  if (!nonempty(input.playerMessage) || input.playerMessage.length > 8000) return json({ error: "Invalid request", reason: "invalid_player_message" }, 400);
+  if (typeof input.summary !== "string" || input.summary.length > 1000) return json({ error: "Invalid request", reason: "invalid_summary" }, 400);
+  if (typeof input.intent !== "string" || !["theory", "question", "answer", "chat", "join"].includes(input.intent)) return json({ error: "Invalid request", reason: "invalid_intent" }, 400);
+  if (!nonempty(context.phone) || context.phone.length > 256) return json({ error: "Invalid request", reason: "invalid_phone" }, 400);
+  if (context.channel !== "telegram") return json({ error: "Invalid request", reason: "invalid_channel" }, 400);
   const transport: Transport = {
     agentId: config.agentId,
     channel: context.channel,
