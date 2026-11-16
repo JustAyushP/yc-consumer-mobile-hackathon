@@ -16,6 +16,7 @@ import type * as chat_messages from "../chat/messages.js";
 import type * as crons from "../crons.js";
 import type * as game_accuse from "../game/accuse.js";
 import type * as game_catalog from "../game/catalog.js";
+import type * as game_commands_dispatch from "../game/commands/dispatch.js";
 import type * as game_engine from "../game/engine.js";
 import type * as game_groups from "../game/groups.js";
 import type * as game_lib from "../game/lib.js";
@@ -54,6 +55,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   "game/accuse": typeof game_accuse;
   "game/catalog": typeof game_catalog;
+  "game/commands/dispatch": typeof game_commands_dispatch;
   "game/engine": typeof game_engine;
   "game/groups": typeof game_groups;
   "game/lib": typeof game_lib;
