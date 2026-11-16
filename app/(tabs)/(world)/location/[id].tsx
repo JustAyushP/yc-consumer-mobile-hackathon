@@ -6,7 +6,7 @@ import { hasVelvetLanternScene, locations } from "@/components/world-content";
 export default function Location() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const location = locations.find(item => item.id === id);
-  return <Page label="PUBLIC LOCATION"><Action title="‹ Back to World" onPress={() => router.canGoBack() ? router.back() : router.replace("/")} />
+  return <Page label="PUBLIC LOCATION"><Action title="‹ Back to World" onPress={() => router.canGoBack() ? router.back() : router.replace("/world")} />
     <ViewerRead query="caseFile">{data => location && hasVelvetLanternScene(data.title) ? <>
       <Text style={ui.eyebrow}>LOCATION {location.number}</Text><Heading>{location.name}</Heading>
       <View style={{ aspectRatio: 1264 / 848 }}><Image source={require("@/assets/images/velvet-lantern-scene.jpg")} style={{ width: "100%", height: "100%", borderRadius: 16 }} accessibilityLabel="Illustrative jazz club cutaway" /></View>

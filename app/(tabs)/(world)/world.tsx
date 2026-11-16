@@ -6,6 +6,7 @@ import { hasVelvetLanternScene, locations } from "@/components/world-content";
 
 export default function World() {
   return <Page label="THE WORLD">
+    <Pressable accessibilityRole="button" accessibilityLabel="Back to stories" onPress={() => router.push("/")} style={styles.storiesLink}><Text style={styles.storiesText}>‹  All stories</Text></Pressable>
     <ViewerRead query="caseFile">{data => <>
       <Heading>{data.title}</Heading>
       <Copy muted>{data.setting}</Copy>
@@ -28,6 +29,8 @@ export default function World() {
 }
 
 const styles = StyleSheet.create({
+  storiesLink: { minHeight: 44, justifyContent: "center" },
+  storiesText: { color: colors.amber, fontFamily: fonts.body, fontSize: 12 },
   scene: { marginTop: 14, aspectRatio: 1264 / 848, backgroundColor: "#000000", overflow: "hidden", borderRadius: 12 },
   art: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", resizeMode: "contain" },
   pin: { position: "absolute", width: 44, height: 44, marginLeft: -22, marginTop: -22, alignItems: "center", justifyContent: "center" },
