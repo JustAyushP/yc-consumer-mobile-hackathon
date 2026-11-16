@@ -17,6 +17,7 @@ import { sfInsightEligible } from "./integration/sfEvidence";
 import { SF_CONTENT_REVISION } from "../cases/sfCandidate";
 
 const replayCommand = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; lineId: "1" | "2" | "3"; caseId: Id<"cases">; day: number; command: Doc<"commandReceipts">["command"] }, unknown>("game/commands/dispatch:dispatch");
+const replayRecovery = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; insightKey: string; text: string }, { credited: boolean }>("game/integration/recoverDeduction:recoverDeduction");
 
 async function closureBinding(ctx: QueryCtx, message: Doc<"messages">, playerId: Id<"players">, lineId: string, expectedAgentKey?: string) {
   const cast = lineId === "1" ? null : await ctx.db.query("casts").withIndex("by_player_line", (q) => q.eq("playerId", playerId).eq("lineId", lineId)).unique();
@@ -151,11 +152,13 @@ export const processConsult = internalMutation({
     group = await currentGroup(ctx, group);
     const daily = await dailyStatus(ctx, group, playerId);
     const receipt = await ctx.db.query("commandReceipts").withIndex("by_message", (q) => q.eq("messageId", args.messageId)).unique();
+    const recovery = await ctx.db.query("brainRecoveryReceipts").withIndex("by_message", (q) => q.eq("messageId", args.messageId)).unique();
     const countedCommand = receipt && receipt.groupId === group._id && receipt.playerId === playerId && receipt.caseId === group.caseId && receipt.day === group.day && receipt.lineId === args.lineId && receipt.dailyTurn !== undefined && receipt.dailyTurnLimit !== undefined &&
       (receipt.result.kind === "answer" || receipt.result.kind === "ability" || receipt.result.kind === "accusation" || (receipt.result.kind === "hint" && receipt.result.value));
     const answer = args.answerId && await ctx.db.get(args.answerId);
     const countedAnswer = answer && answer.groupId === group._id && answer.playerId === playerId && answer.day === group.day && answer.dailyTurnCharged && answer.dailyTurn !== undefined && answer.dailyTurnLimit !== undefined;
-    const previousAdmission = daily.limit === undefined ? undefined : countedCommand ? { turn: receipt.dailyTurn!, limit: receipt.dailyTurnLimit! } : countedAnswer ? { turn: answer.dailyTurn!, limit: answer.dailyTurnLimit! } : undefined;
+    const countedRecovery = recovery && recovery.groupId === group._id && recovery.playerId === playerId && recovery.caseId === group.caseId && recovery.day === group.day && recovery.credited && recovery.messageBody === message.body && recovery.dailyTurn !== undefined && recovery.dailyTurnLimit !== undefined;
+    const previousAdmission = daily.limit === undefined ? undefined : countedCommand ? { turn: receipt.dailyTurn!, limit: receipt.dailyTurnLimit! } : countedAnswer ? { turn: answer.dailyTurn!, limit: answer.dailyTurnLimit! } : countedRecovery ? { turn: recovery.dailyTurn!, limit: recovery.dailyTurnLimit! } : undefined;
     const finalAdmittedTurn = previousAdmission && !daily.completed && previousAdmission.turn === daily.limit && previousAdmission.turn === daily.counter?.turns && previousAdmission.limit === daily.limit;
     if (daily.closed && !finalAdmittedTurn) {
       const binding = await closureBinding(ctx, message, playerId, args.lineId, args.agentKey);
@@ -167,6 +170,7 @@ export const processConsult = internalMutation({
       return directive;
     }
     if (countedCommand) await ctx.runMutation(replayCommand, { groupId: group._id, playerId, messageId: args.messageId, lineId: receipt.lineId, caseId: group.caseId, day: group.day, command: receipt.command });
+    if (countedRecovery) await ctx.runMutation(replayRecovery, { groupId: group._id, playerId, messageId: args.messageId, insightKey: recovery.insightKey, text: recovery.text });
     const admitted = previousAdmission ?? await consumeDailyTurn(ctx, group, playerId);
     const caseRecord = await ctx.db.get(group.caseId);
     if (!caseRecord) throw new Error("Invalid case");

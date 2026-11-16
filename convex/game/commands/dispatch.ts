@@ -13,6 +13,7 @@ import { verifiedSfGroup } from "../integration/sf";
 import { SF_CONTENT_REVISION } from "../../cases/sfCandidate";
 import { SF_REVIEWED_HINTS } from "../../cases/sfContent";
 import { segmentAccess } from "../integration/access";
+import { sfInsightEligible } from "../integration/sfEvidence";
 
 const command = v.union(
   v.object({ kind: v.literal("survey"), answers: v.array(v.object({ questionKey: v.string(), optionIndex: v.number() })) }),
@@ -115,7 +116,7 @@ export const dispatch = internalMutation({
           const questions = await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", group.caseId)).collect();
           if (!questions.some((question) => segment.questionKeys.includes(question.key) && question.insightKeys.includes(insightKey))) throw new Error("Stale command result");
         }
-        if (kase.contentRevision === SF_CONTENT_REVISION && !await verifiedSfGroup(ctx, group._id, group.caseId)) throw new Error("SF story revision changed");
+        if (kase.contentRevision === SF_CONTENT_REVISION && (!await verifiedSfGroup(ctx, group._id, group.caseId) || !await sfInsightEligible(ctx, group, receipt.command.insightKey))) throw new Error("SF hint is not authorized");
         const reviewed = selectReviewedHint(kase.key, receipt.command.insightKey, insights.map((item) => item.key), progress.map((item) => item.insightKey), kase.contentRevision === SF_CONTENT_REVISION ? SF_REVIEWED_HINTS : reviewedHintsForCase(kase.key));
         const hints = await ctx.db.query("hints").withIndex("by_group_week", (q) => q.eq("groupId", group._id).eq("week", weekOf(args.day))).collect();
         if (!reviewed || (receipt.result.value && !hints.some((hint) => hint.playerId === player._id && hint.day === args.day && hint.insightKey === reviewed.insightKey && hint.body === reviewed.body))) throw new Error("Stale command result");
@@ -124,7 +125,8 @@ export const dispatch = internalMutation({
     }
 
     if (group.status !== "active" && !(args.command.kind === "survey" && group.status === "lobby")) throw new Error("The case isn't open");
-    if (message.answerId || await ctx.db.query("storyEvents").withIndex("by_message", (q) => q.eq("messageId", message._id)).first()) throw new Error("Message already associated");
+    if (message.answerId || await ctx.db.query("storyEvents").withIndex("by_message", (q) => q.eq("messageId", message._id)).first() ||
+      await ctx.db.query("brainRecoveryReceipts").withIndex("by_message", (q) => q.eq("messageId", message._id)).first()) throw new Error("Message already associated");
     await assignImpl(ctx, player._id, args.lineId, message.agentKey);
     let value: Infer<typeof result>;
     switch (args.command.kind) {
@@ -155,7 +157,7 @@ export const dispatch = internalMutation({
       case "hint": {
         const insights = await ctx.db.query("insights").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
         const progress = await ctx.db.query("progress").withIndex("by_group", (q) => q.eq("groupId", group._id)).collect();
-        if (kase.contentRevision === SF_CONTENT_REVISION && !await verifiedSfGroup(ctx, group._id, group.caseId)) throw new Error("SF story revision changed");
+        if (kase.contentRevision === SF_CONTENT_REVISION && (!await verifiedSfGroup(ctx, group._id, group.caseId) || !await sfInsightEligible(ctx, group, args.command.insightKey))) throw new Error("SF hint is not authorized");
         const reviewed = selectReviewedHint(kase.key, args.command.insightKey, insights.map((item) => item.key), progress.map((item) => item.insightKey), kase.contentRevision === SF_CONTENT_REVISION ? SF_REVIEWED_HINTS : reviewedHintsForCase(kase.key));
         if (!reviewed) throw new Error("No eligible reviewed hint");
         value = { kind: "hint", value: await ctx.runMutation(internal.game.engine.giveHint, { groupId: group._id, playerId: player._id, insightKey: reviewed.insightKey, body: reviewed.body }) };

@@ -246,6 +246,7 @@ export default defineSchema({
   brainRecoveryReceipts: defineTable({
     messageId: v.id("messages"), groupId: v.id("groups"), caseId: v.id("cases"), playerId: v.id("players"),
     day: v.number(), insightKey: v.string(), text: v.string(), messageBody: v.string(), credited: v.boolean(),
+    dailyTurn: v.optional(v.number()), dailyTurnLimit: v.optional(v.number()),
   }).index("by_message", ["messageId"]),
 
   commandReceipts: defineTable({

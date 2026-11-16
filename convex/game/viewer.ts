@@ -3,6 +3,7 @@ import { internalMutation, query } from "../_generated/server";
 import { ROLES } from "./catalog";
 import { groupPlayers, hintsLeft, requireViewer } from "./lib";
 import { segmentAccess } from "./integration/access";
+import { SF_CONTENT_REVISION } from "../cases/sfCandidate";
 
 // The read-only app's API. Every public function in the backend lives here, and each one is scoped by viewerToken.
 
@@ -86,10 +87,12 @@ export const story = query({
     const rows = await ctx.db.query("messages").withIndex("by_group", (q) => q.eq("groupId", group._id)).order("desc").take(300);
     const narration = await ctx.db.query("narration").withIndex("by_group", (q) => q.eq("groupId", group._id)).order("desc").take(300);
     const segment = await segmentAccess(ctx, group);
+    const caseRecord = segment && await ctx.db.get(group.caseId);
+    const revealAllowed = group.status === "solved" && (caseRecord?.contentRevision !== SF_CONTENT_REVISION || (segment?.index === 7 && segment.completed));
     return [...rows.filter((m) => (NARRATION as readonly string[]).includes(m.kind) && !m.agentKey && (m.kind === "intro" || !m.playerId || m.playerId === player._id) &&
-      (!segment || (m.kind !== "day" && m.kind !== "clue" && (m.kind !== "reveal" || group.status === "solved")))),
+      (!segment || (m.kind !== "day" && m.kind !== "clue" && (m.kind !== "reveal" || revealAllowed)))),
       ...narration.filter((m) => (!m.playerId || m.playerId === player._id) && (!segment ||
-        (m.kind === "day" ? m.segmentIndex !== undefined && m.segmentIndex <= segment.index : m.kind === "clue" ? m.clueKey !== undefined && segment.clueKeys.includes(m.clueKey) : m.kind !== "reveal" || group.status === "solved")))]
+        (m.kind === "day" ? m.segmentIndex !== undefined && m.segmentIndex <= segment.index : m.kind === "clue" ? m.clueKey !== undefined && segment.clueKeys.includes(m.clueKey) : m.kind !== "reveal" || revealAllowed)))]
       .map((m) => ({ _id: m._id, kind: m.kind, body: m.body, at: m._creationTime }))
       .sort((a, b) => a.at - b.at).slice(-300);
   },
@@ -167,8 +170,9 @@ export const reveal = query({
   handler: async (ctx, { viewerToken }) => {
     const { group } = await requireViewer(ctx, viewerToken);
     if (group.status !== "solved") return null;
-    await segmentAccess(ctx, group);
+    const segment = await segmentAccess(ctx, group);
     const kase = (await ctx.db.get(group.caseId))!;
+    if (kase.contentRevision === SF_CONTENT_REVISION && (!segment || segment.index !== 7 || !segment.completed)) return null;
     const culprit = (await ctx.db.query("suspects").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect()).find((s) => s.key === kase.culpritKey);
     const solver = group.solvedBy ? await ctx.db.get(group.solvedBy) : null;
     return { culprit: culprit?.name ?? kase.culpritKey, story: kase.reveal, solvedBy: solver?.name ?? null, solvedDay: group.solvedDay ?? null };

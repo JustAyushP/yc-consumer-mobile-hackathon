@@ -75,10 +75,16 @@ it("runs the isolated SF case through seven flexible segments with three private
   const recoveryMessage = await message(players[0], "revisit evidence");
   await expect(t.mutation(recover, { groupId, playerId: players[0], messageId: recoveryMessage, insightKey: "i_mk", text: "Margot is the bookkeeper" })).rejects.toThrow("not authorized");
   const recovery = { groupId, playerId: players[0], messageId: recoveryMessage, insightKey: "i_poison", text: "Digitalis poisoned the bourbon" };
+  await t.run(async (ctx) => ctx.db.patch(groupId, { dailyTurnLimit: 1 }));
   expect(await t.mutation(recover, recovery)).toEqual({ credited: true });
   expect(await t.mutation(recover, recovery)).toEqual({ credited: true });
   await expect(t.mutation(recover, { ...recovery, playerId: outsider })).rejects.toThrow();
   await expect(t.mutation(recover, { ...recovery, text: "other" })).rejects.toThrow();
+  await expect(t.mutation(dispatch, { groupId, playerId: players[0], messageId: recoveryMessage, lineId: "1", caseId, day: 1, command: { kind: "answer", questionKey: "d1q1", text: "proof" } })).rejects.toThrow("Message already associated");
+  expect((await t.action(internal.ravo.consult.consult, { groupId, playerId: players[0], messageId: recoveryMessage, lineId: "1", agentKey: "common" })).endTurn).toBe(false);
+  expect((await t.run(async (ctx) => ctx.db.query("brainDailyTurns").withIndex("by_player_day", (q) => q.eq("playerId", players[0]).eq("day", 1)).unique()))?.turns).toBe(1);
+  expect(await t.mutation(recover, recovery)).toEqual({ credited: true });
+  await t.run(async (ctx) => ctx.db.patch(groupId, { dailyTurnLimit: 0 }));
   expect((await t.query(api.game.viewer.board, { viewerToken: "sf-1" })).clues.some((clue) => clue.key === "e_prescription")).toBe(false);
   expect(JSON.stringify(await t.query(api.game.viewer.story, { viewerToken: "sf-1" }))).not.toContain("Pharmacy Record");
   await answer(players[1], "d1q2", "Vivian's lipstick glass was earlier at the toast");
@@ -94,6 +100,9 @@ it("runs the isolated SF case through seven flexible segments with three private
   await answer(players[2], "d2q2", "Margot is the bookkeeper");
   await settleScheduled(t);
   expect((await t.query(api.game.viewer.board, { viewerToken: "sf-0" })).clues.some((clue) => clue.key === "e_ledger")).toBe(false);
+  const prematureHint = await message(players[1], "hint");
+  await expect(t.mutation(dispatch, { groupId, playerId: players[1], messageId: prematureHint, lineId: "1", caseId, day: 2, command: { kind: "hint", insightKey: "i_ledger" } })).rejects.toThrow("SF hint is not authorized");
+  expect(await t.mutation(internal.game.engine.giveHint, { groupId, playerId: players[1], insightKey: "i_ledger", body: "not yet" })).toBe(false);
   expect((await talk(players[0])).guidance).toContain("official accounts");
   expect((await t.query(api.game.viewer.board, { viewerToken: "sf-0" })).clues.some((clue) => clue.key === "e_ledger")).toBe(true);
   await answer(players[0], "d2q2", "Margot the bookkeeper; the ledger records skimmed receipts");

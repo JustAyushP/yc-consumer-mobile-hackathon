@@ -7,6 +7,7 @@ import { matchInsights } from "../../ravo/scoring";
 import { currentGroup, unlockClueImpl } from "../engine";
 import { verifiedSfGroup } from "./sf";
 import { sfInsightEligible } from "./sfEvidence";
+import { dailyStatus } from "./daily";
 
 const recordInsight = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; insightKey: string }, boolean>("game/engine:recordInsight");
 
@@ -42,8 +43,10 @@ export const recoverDeduction = internalMutation({
       const clues = await ctx.db.query("clues").withIndex("by_case", (q) => q.eq("caseId", group!.caseId)).collect();
       for (const clue of clues) if ("insight" in clue.unlock && clue.unlock.insight === args.insightKey) await unlockClueImpl(ctx, group, clue.key);
     }
+    const daily = credited ? await dailyStatus(ctx, group, player._id) : null;
     await ctx.db.insert("brainRecoveryReceipts", { groupId: group._id, caseId: group.caseId, playerId: player._id, messageId: args.messageId,
-      day: group.day, insightKey: args.insightKey, text: args.text, messageBody: message.body, credited });
+      day: group.day, insightKey: args.insightKey, text: args.text, messageBody: message.body, credited,
+      dailyTurn: daily?.counter?.turns, dailyTurnLimit: daily?.limit });
     return { credited };
   },
 });

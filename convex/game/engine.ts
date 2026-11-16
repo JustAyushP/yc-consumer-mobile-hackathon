@@ -107,6 +107,7 @@ export const giveHint = internalMutation({
       const questions = await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", group!.caseId)).collect();
       if (!questions.some((question) => segment.questionKeys.includes(question.key) && question.insightKeys.includes(insightKey))) return false;
     }
+    if (await isSfBound(ctx, groupId, group.caseId) && (!await verifiedSfGroup(ctx, groupId, group.caseId) || !await sfInsightEligible(ctx, group, insightKey))) return false;
     if ((await hintsLeft(ctx, group)) <= 0) return false;
     await consumeDailyTurn(ctx, group, playerId);
     await ctx.db.insert("hints", { groupId, playerId, week: weekOf(group.day), day: group.day, insightKey, body });

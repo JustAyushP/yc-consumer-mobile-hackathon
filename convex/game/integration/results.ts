@@ -43,7 +43,10 @@ export const solvedResult = internalQuery({
       receipt.command.kind !== "accusation" || receipt.result.kind !== "accusation" || !receipt.result.value.correct) return null;
     const caseRecord = await ctx.db.get(group.caseId);
     if (!caseRecord || receipt.command.suspectKey !== caseRecord.culpritKey) return null;
-    if ((caseRecord.contentRevision === SF_CONTENT_REVISION || await isSfBound(ctx, group._id, group.caseId)) && !await verifiedSfGroup(ctx, group._id, group.caseId)) return null;
+    if (caseRecord.contentRevision === SF_CONTENT_REVISION || await isSfBound(ctx, group._id, group.caseId)) {
+      const segments = await ctx.db.query("brainSegments").withIndex("by_group", (q) => q.eq("groupId", group._id)).unique();
+      if (!segments || segments.index !== 7 || !segments.completed || !segments.definitions[6]?.accusationEligible || !await verifiedSfGroup(ctx, group._id, group.caseId)) return null;
+    }
     return { correct: true as const, reveal: caseRecord.reveal };
   },
 });
