@@ -1,3 +1,7 @@
+export function hasVelvetLanternScene(title: string) {
+  return title === "Death at the Velvet Lantern" || title === "Last Call on Market Street";
+}
+
 export const locations = [
   { id: "bar", name: "The bar", number: "01", x: 24, y: 51, subtitle: "The club's gathering place", body: "A long bar sits beside the main room. This illustration introduces the club's setting; it does not establish anyone's movements or prove a theory." },
   { id: "stage", name: "The stage", number: "02", x: 54, y: 53, subtitle: "Beyond the velvet curtain", body: "The stage anchors the Velvet Lantern's public room. Read the case file and unlocked evidence for verified accounts of the night." },

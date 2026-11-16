@@ -2,14 +2,14 @@ import { router } from "expo-router";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { Action, Card, Copy, Heading, Notice, Page, Section, ui, ViewerRead } from "@/components/companion";
 import { colors, fonts } from "@/components/ui/theme";
-import { locations } from "@/components/world-content";
+import { hasVelvetLanternScene, locations } from "@/components/world-content";
 
 export default function World() {
   return <Page label="THE WORLD">
     <ViewerRead query="caseFile">{data => <>
       <Heading>{data.title}</Heading>
       <Copy muted>{data.setting}</Copy>
-      {data.title === "Death at the Velvet Lantern" ? <>
+      {hasVelvetLanternScene(data.title) ? <>
         <View style={styles.scene}>
           <Image source={require("@/assets/images/velvet-lantern-scene.jpg")} style={styles.art} accessibilityLabel="Illustrative cutaway of the Velvet Lantern jazz club. Locations are also listed below." />
           {locations.map(location => <Pressable key={location.id} accessibilityRole="button" accessibilityLabel={`Read about ${location.name}`} onPress={() => router.push({ pathname: "/location/[id]", params: { id: location.id } })} style={[styles.pin, { left: `${location.x}%`, top: `${location.y}%` }]}><Text style={styles.pinText}>{location.number}</Text></Pressable>)}
