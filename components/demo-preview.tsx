@@ -3,6 +3,7 @@ import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensi
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Action, Card, Copy, Heading, Icon, Page, Section, ui } from "./companion";
 import { demoCase } from "./demo-data";
+import { TelegramButton } from "./telegram-button";
 import { colors, fonts } from "./ui/theme";
 import { locations } from "./world-content";
 
@@ -38,6 +39,7 @@ export default function DemoPreview() {
       </> : tab === "investigation" ? <>
         <Heading>Follow the threads.</Heading>
         <Text style={styles.subtitle}>Your team’s case, in one place</Text>
+        <TelegramButton demo />
         <View style={styles.section}>
           <View style={styles.progressCard}>
             <Text style={ui.eyebrow}>CASE PROGRESS</Text>
