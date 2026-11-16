@@ -9,7 +9,8 @@ export const COMMON_CHARACTER = { agentKey: "common", name: "Sal, the night bart
  * Which character a player gets on a Keiki line. Line 1 is the common character for everyone.
  * Lines 2 and 3 get a suspect, assigned deterministically by join order and recorded in `casts`.
  */
-async function assignImpl(ctx: MutationCtx, playerId: Id<"players">, lineId: string, expectedAgentKey?: string) {
+export async function assignImpl(ctx: MutationCtx, playerId: Id<"players">, lineId: string, expectedAgentKey?: string) {
+    if (lineId !== "1" && lineId !== "2" && lineId !== "3") throw new Error("Invalid conversation");
     if (lineId === COMMON_LINE) {
       if (expectedAgentKey && expectedAgentKey !== COMMON_CHARACTER.agentKey) throw new Error("Invalid conversation");
       return COMMON_CHARACTER;
@@ -19,8 +20,9 @@ async function assignImpl(ctx: MutationCtx, playerId: Id<"players">, lineId: str
     const suspects = await ctx.db.query("suspects").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
     const existing = await ctx.db.query("casts").withIndex("by_player_line", (q) => q.eq("playerId", playerId).eq("lineId", lineId)).first();
     if (existing) {
-      if (expectedAgentKey && expectedAgentKey !== existing.agentKey) throw new Error("Invalid conversation");
-      return { agentKey: existing.agentKey, name: suspects.find((s) => s.key === existing.agentKey)?.name ?? existing.agentKey };
+      const suspect = suspects.find((s) => s.key === existing.agentKey);
+      if (existing.groupId !== group._id || !suspect || (expectedAgentKey && expectedAgentKey !== existing.agentKey)) throw new Error("Invalid conversation");
+      return { agentKey: existing.agentKey, name: suspect.name };
     }
     const order = (await ctx.db.query("players").withIndex("by_group", (q) => q.eq("groupId", group._id)).collect()).findIndex((p) => p._id === playerId);
     const slot = Number(lineId) === 3 ? 1 : 0;

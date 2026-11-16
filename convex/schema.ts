@@ -156,6 +156,7 @@ export default defineSchema({
     externalId: v.optional(v.string()),
     agentKey: v.optional(v.string()),
     lineId: v.optional(v.string()),
+    answerId: v.optional(v.id("answers")),
   })
     .index("by_group", ["groupId"])
     .index("by_player_agent", ["playerId", "agentKey"])
@@ -189,6 +190,32 @@ export default defineSchema({
     lineId: v.string(),
     agentKey: v.string(),
   }).index("by_player_line", ["playerId", "lineId"]),
+
+  storyStates: defineTable({
+    groupId: v.id("groups"),
+    version: v.number(),
+    act: v.number(),
+    doneBeats: v.array(v.string()),
+    flags: v.record(v.string(), v.boolean()),
+    lastProgressDay: v.number(),
+    lastStallDay: v.optional(v.number()),
+  }).index("by_group", ["groupId"]),
+
+  storyEvents: defineTable({
+    groupId: v.id("groups"),
+    caseId: v.id("cases"),
+    playerId: v.id("players"),
+    messageId: v.id("messages"),
+    lineId: v.string(),
+    answerId: v.optional(v.id("answers")),
+    questionKey: v.optional(v.string()),
+    questionDay: v.optional(v.number()),
+    sheetJson: v.string(),
+    contentJson: v.string(),
+    clueKeys: v.array(v.string()),
+    insightKeys: v.array(v.string()),
+    directiveJson: v.string(),
+  }).index("by_message", ["messageId"]).index("by_answer", ["answerId"]),
 
   viewerTokens: defineTable({
     token: v.string(),
