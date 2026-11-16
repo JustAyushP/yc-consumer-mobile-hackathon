@@ -8,15 +8,17 @@ import { internalQuery } from "../_generated/server";
 import schema from "../schema";
 import { handleConsult, type DemoConfig, type Dependencies } from "./keikiHandler";
 
-const config: DemoConfig = { enabled: "true", apiKey: "fixture-tool-key", agentId: "demo-agent", lineId: "1" };
+const telegramBotId = "1000000001";
+const toolQuery = `?lineId=1&botId=${telegramBotId}`;
+const config: DemoConfig = { enabled: "true", apiKey: "fixture-tool-key", agentId: "demo-agent", lineId: "1", telegramBotId };
 const payload = {
   input: { playerMessage: "  My exact question.\n", summary: "A question", intent: "question" },
-  context: { phone: "+15550000001", channel: "imessage" },
+  context: { phone: "fixture-user-one", channel: "telegram" },
 };
 
 afterEach(() => vi.unstubAllEnvs());
 
-function request(body: unknown = payload, headers: Record<string, string | null> = {}, query = "?lineId=1") {
+function request(body: unknown = payload, headers: Record<string, string | null> = {}, query = toolQuery) {
   const values = new Headers({ "content-type": "application/json", "X-Orchid-Api-Key": "fixture-tool-key", "X-Orchid-Trace-Id": "demo-trace" });
   for (const [key, value] of Object.entries(headers)) {
     if (value === null) values.delete(key);
@@ -44,9 +46,9 @@ async function setup(realAuthorization = false) {
     const otherGroupId = await ctx.db.insert("groups", { name: "Other", joinCode: "OTHER", caseId, status: "active", day: 1, dayOpenedAt: Date.now(), progress: 0, wrongAccusations: 0 });
     const playerId = await ctx.db.insert("players", { groupId, name: "One", joinedDay: 1, lateJoiner: false });
     const secondPlayerId = await ctx.db.insert("players", { groupId, name: "Two", joinedDay: 1, lateJoiner: false });
-    const binding = { agentId: "demo-agent", channel: "imessage", conversationId: payload.context.phone, senderId: payload.context.phone, lineId: "1", groupId, playerId, active: true };
+    const binding = { agentId: "demo-agent", channel: "telegram", conversationId: JSON.stringify(["telegram", telegramBotId, payload.context.phone]), senderId: payload.context.phone, lineId: "1", groupId, playerId, active: true };
     const bindingId = await ctx.db.insert("keikiBindings", binding);
-    const secondBindingId = await ctx.db.insert("keikiBindings", { ...binding, conversationId: "+15550000002", senderId: "+15550000002", playerId: secondPlayerId });
+    const secondBindingId = await ctx.db.insert("keikiBindings", { ...binding, conversationId: JSON.stringify(["telegram", telegramBotId, "fixture-user-two"]), senderId: "fixture-user-two", playerId: secondPlayerId });
     return { caseId, groupId, otherGroupId, playerId, secondPlayerId, bindingId, secondBindingId };
   });
   const consult = vi.fn<Dependencies["consult"]>(async ({ playerId }) => ({ character: { agentKey: "common", name: "Fixture actor" }, guidance: `Private fixture for ${playerId}` }));
@@ -74,9 +76,35 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
     expect(consult).not.toHaveBeenCalled();
   });
 
-  it.each(["apiKey", "agentId", "lineId"] as const)("fails closed without %s", async (key) => {
+  it.each(["apiKey", "agentId", "lineId", "telegramBotId"] as const)("fails closed without %s", async (key) => {
     const { send } = await setup();
     expect((await send(request(), { ...config, [key]: undefined })).status).toBe(503);
+  });
+
+  it.each(["", " ", "bot-name", "1.2", "1e3", "-1", "123\n"])("fails closed with nonnumeric bot config %j", async (telegramBotId) => {
+    const { send, state, consult } = await setup();
+    expect((await send(request(), { ...config, telegramBotId })).status).toBe(503);
+    expect((await state()).messages).toHaveLength(0);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it.each(["imessage", "whatsapp", "Telegram", "", "slack"])("rejects non-Telegram channel %j", async (channel) => {
+    const { send, state, consult } = await setup();
+    expect((await send(request({ ...payload, context: { ...payload.context, channel } }))).status).toBe(400);
+    expect((await state()).messages).toHaveLength(0);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it("cannot reuse the same sender's binding or completed trace under a different configured bot", async () => {
+    const { send, state, consult } = await setup();
+    expect((await send()).status).toBe(200);
+    const response = await send(request(payload, {}, "?lineId=1&botId=1000000002"), { ...config, telegramBotId: "1000000002" });
+    expect(response.status).toBe(403);
+    expect(await response.text()).not.toContain("Private fixture");
+    const saved = await state();
+    expect(saved.messages).toHaveLength(1);
+    expect(saved.receipts).toHaveLength(1);
+    expect(consult).toHaveBeenCalledTimes(1);
   });
 
   it.each([null, "wrong", "fixture-tool-key-longer"])("rejects invalid legacy auth %s", async (key) => {
@@ -86,7 +114,16 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
     expect(consult).not.toHaveBeenCalled();
   });
 
-  it.each(["", "?lineId=2", "?lineId=1&lineId=1", "?lineId=1&agentId=other"])("rejects route %s", async (query) => {
+  it.each([
+    "",
+    `?lineId=2&botId=${telegramBotId}`,
+    `?lineId=1&lineId=1&botId=${telegramBotId}`,
+    `${toolQuery}&agentId=other`,
+    "?lineId=1",
+    "?lineId=1&botId=1000000002",
+    `${toolQuery}&botId=${telegramBotId}`,
+    "?lineId=1&botId=",
+  ])("rejects route %s", async (query) => {
     const { send, state } = await setup();
     expect((await send(request(payload, {}, query))).status).toBe(400);
     expect((await state()).messages).toHaveLength(0);
@@ -108,7 +145,7 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
     expect((await send(request({ ...payload, context: { ...payload.context, internal } }))).status).toBe(403);
   });
 
-  it.each(["groupId", "playerId", "lineId", "agentKey", "agentId", "messageId", "phone", "conversationId", "senderId"])("rejects model-selected %s", async (key) => {
+  it.each(["groupId", "playerId", "lineId", "botId", "agentKey", "agentId", "messageId", "phone", "conversationId", "senderId"])("rejects model-selected %s", async (key) => {
     const { send, state } = await setup();
     expect((await send(request({ ...payload, input: { ...payload.input, [key]: "attacker-choice" } }))).status).toBe(400);
     expect((await state()).messages).toHaveLength(0);
@@ -117,8 +154,9 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
   it.each([
     { ...payload, playerId: "other" },
     { ...payload, context: { ...payload.context, senderId: "other" } },
-    { ...payload, context: { phone: "", channel: "imessage" } },
-    { ...payload, context: { phone: "x".repeat(257), channel: "imessage" } },
+    { ...payload, context: { ...payload.context, botId: "1000000002" } },
+    { ...payload, context: { phone: "", channel: "telegram" } },
+    { ...payload, context: { phone: "x".repeat(257), channel: "telegram" } },
     { ...payload, context: { ...payload.context, channel: "x".repeat(65) } },
     { ...payload, input: { ...payload.input, playerMessage: " " } },
     { ...payload, input: { ...payload.input, playerMessage: "x".repeat(8001) } },
@@ -139,12 +177,13 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
     expect((await send(request({ text: "x".repeat(64001) }))).status).toBe(413);
   });
 
-  it.each(["phone", "channel", "agent", "sender", "line", "inactive", "ambiguous", "moved-player", "missing-player", "missing-group"])("rejects %s binding without a global phone lookup", async (mode) => {
+  it.each(["phone", "channel", "bot", "agent", "sender", "line", "inactive", "ambiguous", "moved-player", "missing-player", "missing-group"])("rejects %s binding without a global phone lookup", async (mode) => {
     const { t, bindingId, otherGroupId, playerId, send, state, consult } = await setup();
     await t.run(async (ctx) => {
       const binding = (await ctx.db.get(bindingId))!;
       if (mode === "phone") await ctx.db.patch(bindingId, { conversationId: "different" });
       if (mode === "channel") await ctx.db.patch(bindingId, { channel: "whatsapp" });
+      if (mode === "bot") await ctx.db.patch(bindingId, { conversationId: JSON.stringify(["telegram", "1000000002", payload.context.phone]) });
       if (mode === "agent") await ctx.db.patch(bindingId, { agentId: "different" });
       if (mode === "sender") await ctx.db.patch(bindingId, { senderId: "different" });
       if (mode === "line") await ctx.db.patch(bindingId, { lineId: "2" });
@@ -175,6 +214,9 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
     expect(saved.messages[0].externalId).toBeUndefined();
     expect(saved.receipts).toHaveLength(1);
     expect(saved.receipts[0]).toMatchObject({ status: "completed", messageId: saved.messages[0]._id, directiveJson: JSON.stringify(directive) });
+    expect(JSON.parse(saved.receipts[0].eventKey)).toEqual([
+      "keiki-demo-trace", "demo-agent", "telegram", JSON.stringify(["telegram", telegramBotId, payload.context.phone]), payload.context.phone, "1", "demo-trace",
+    ]);
     expect(saved.scheduled).toHaveLength(0);
     expect(consult).toHaveBeenCalledExactlyOnceWith({ groupId, playerId, messageId: saved.messages[0]._id, lineId: "1", agentKey: "common" });
     expect(consult.mock.calls[0][0]).not.toHaveProperty("answerId");
@@ -289,7 +331,7 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
   it("scopes the same trace to two players on one line and keeps fixture directives isolated", async () => {
     const { send, playerId, secondPlayerId, state, consult } = await setup();
     const first = await send();
-    const second = await send(request({ ...payload, context: { ...payload.context, phone: "+15550000002" } }));
+    const second = await send(request({ ...payload, context: { ...payload.context, phone: "fixture-user-two" } }));
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect((await first.json()).guidance).toBe(`Private fixture for ${playerId}`);
@@ -314,15 +356,16 @@ describe("demo ingress with fake hosted transport and real deterministic RAVO co
     vi.stubEnv("KEIKI_TOOL_API_KEY", "fixture-tool-key");
     vi.stubEnv("KEIKI_DEMO_AGENT_ID", "demo-agent");
     vi.stubEnv("KEIKI_DEMO_LINE_ID", "1");
+    vi.stubEnv("KEIKI_DEMO_TELEGRAM_BOT_ID", telegramBotId);
     const req = request();
     const init = { method: "POST", headers: req.headers, body: await req.text() };
-    const response = await t.fetch("/keiki/consult?lineId=1", init);
+    const response = await t.fetch(`/keiki/consult${toolQuery}`, init);
     expect(response.status).toBe(200);
     const directive = await response.json();
     expect(directive).toMatchObject({ character: { agentKey: "common", name: "Sal, the night bartender" }, tone: "noir", progressDelta: 0 });
     expect(directive.reveal).toBeUndefined();
     expect(directive.crossPlayer).toBeUndefined();
-    const replay = await t.fetch("/keiki/consult?lineId=1", init);
+    const replay = await t.fetch(`/keiki/consult${toolQuery}`, init);
     expect(replay.status).toBe(409);
     expect(await replay.text()).not.toContain(directive.guidance);
     expect((await state()).messages).toHaveLength(1);
