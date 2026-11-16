@@ -8,6 +8,12 @@ import { ROLES, SURVEY } from "../catalog";
 import { projectedDay } from "../engine";
 import { weekOf } from "../lib";
 import { reviewedHintsForCase, selectReviewedHint } from "./reviewedHints";
+import { dailyStatus } from "../integration/daily";
+import { verifiedSfGroup } from "../integration/sf";
+import { SF_CONTENT_REVISION } from "../../cases/sfCandidate";
+import { SF_REVIEWED_HINTS } from "../../cases/sfContent";
+import { segmentAccess } from "../integration/access";
+import { sfInsightEligible } from "../integration/sfEvidence";
 
 const command = v.union(
   v.object({ kind: v.literal("survey"), answers: v.array(v.object({ questionKey: v.string(), optionIndex: v.number() })) }),
@@ -52,6 +58,7 @@ export const dispatch = internalMutation({
     if (message.intakeCaseId !== args.caseId || message.intakeDay !== args.day || group.caseId !== args.caseId ||
         !Number.isInteger(args.day) || projectedDay(group) !== args.day) throw new Error("Stale or missing intake context");
     if (group.status !== "lobby" && group.dayOpenedAt !== undefined && !group.gameTimeOffsetMs && projectedDay(group) === group.day && message._creationTime < group.dayOpenedAt) throw new Error("Message predates the current day");
+    if (args.command.kind === "accusation" && (args.lineId !== "1" || message.agentKey !== COMMON_CHARACTER.agentKey)) throw new Error("Make accusations in the common conversation");
 
     const receipts = await ctx.db.query("commandReceipts").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect();
     if (receipts.length > 1) throw new Error("Ambiguous command receipt");
@@ -85,6 +92,8 @@ export const dispatch = internalMutation({
       if (receipt.command.kind === "survey" && !player.roleKey) throw new Error("Stale command result");
       if (receipt.command.kind === "ability" && receipt.result.kind === "ability") {
         const targetKey = receipt.command.targetKey;
+        const segment = await segmentAccess(ctx, group);
+        if (segment && !segment.abilityTargets.includes(targetKey)) throw new Error("Stale command result");
         const expected = receipt.result.value;
         const session = await ctx.db.query("sessions").withIndex("by_player_day", (q) => q.eq("playerId", player._id).eq("day", args.day)).first();
         if (!player.roleKey || !session || session.groupId !== group._id || session.abilityTarget !== targetKey || session.abilityResult !== expected) throw new Error("Stale command result");
@@ -102,7 +111,14 @@ export const dispatch = internalMutation({
       if (receipt.command.kind === "hint" && receipt.result.kind === "hint") {
         const insights = await ctx.db.query("insights").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
         const progress = await ctx.db.query("progress").withIndex("by_group", (q) => q.eq("groupId", group._id)).collect();
-        const reviewed = selectReviewedHint(kase.key, receipt.command.insightKey, insights.map((item) => item.key), progress.map((item) => item.insightKey), reviewedHintsForCase(kase.key));
+        const segment = await segmentAccess(ctx, group);
+        if (segment) {
+          const insightKey = receipt.command.insightKey;
+          const questions = await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", group.caseId)).collect();
+          if (!questions.some((question) => segment.questionKeys.includes(question.key) && question.insightKeys.includes(insightKey))) throw new Error("Stale command result");
+        }
+        if (kase.contentRevision === SF_CONTENT_REVISION && (!await verifiedSfGroup(ctx, group._id, group.caseId) || !await sfInsightEligible(ctx, group, receipt.command.insightKey))) throw new Error("SF hint is not authorized");
+        const reviewed = selectReviewedHint(kase.key, receipt.command.insightKey, insights.map((item) => item.key), progress.map((item) => item.insightKey), kase.contentRevision === SF_CONTENT_REVISION ? SF_REVIEWED_HINTS : reviewedHintsForCase(kase.key));
         const hints = await ctx.db.query("hints").withIndex("by_group_week", (q) => q.eq("groupId", group._id).eq("week", weekOf(args.day))).collect();
         if (!reviewed || (receipt.result.value && !hints.some((hint) => hint.playerId === player._id && hint.day === args.day && hint.insightKey === reviewed.insightKey && hint.body === reviewed.body))) throw new Error("Stale command result");
       }
@@ -110,7 +126,8 @@ export const dispatch = internalMutation({
     }
 
     if (group.status !== "active" && !(args.command.kind === "survey" && group.status === "lobby")) throw new Error("The case isn't open");
-    if (message.answerId || await ctx.db.query("storyEvents").withIndex("by_message", (q) => q.eq("messageId", message._id)).first()) throw new Error("Message already associated");
+    if (message.answerId || await ctx.db.query("storyEvents").withIndex("by_message", (q) => q.eq("messageId", message._id)).first() ||
+      await ctx.db.query("brainRecoveryReceipts").withIndex("by_message", (q) => q.eq("messageId", message._id)).first()) throw new Error("Message already associated");
     await assignImpl(ctx, player._id, args.lineId, message.agentKey);
     let value: Infer<typeof result>;
     switch (args.command.kind) {
@@ -141,7 +158,8 @@ export const dispatch = internalMutation({
       case "hint": {
         const insights = await ctx.db.query("insights").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
         const progress = await ctx.db.query("progress").withIndex("by_group", (q) => q.eq("groupId", group._id)).collect();
-        const reviewed = selectReviewedHint(kase.key, args.command.insightKey, insights.map((item) => item.key), progress.map((item) => item.insightKey), reviewedHintsForCase(kase.key));
+        if (kase.contentRevision === SF_CONTENT_REVISION && (!await verifiedSfGroup(ctx, group._id, group.caseId) || !await sfInsightEligible(ctx, group, args.command.insightKey))) throw new Error("SF hint is not authorized");
+        const reviewed = selectReviewedHint(kase.key, args.command.insightKey, insights.map((item) => item.key), progress.map((item) => item.insightKey), kase.contentRevision === SF_CONTENT_REVISION ? SF_REVIEWED_HINTS : reviewedHintsForCase(kase.key));
         if (!reviewed) throw new Error("No eligible reviewed hint");
         value = { kind: "hint", value: await ctx.runMutation(internal.game.engine.giveHint, { groupId: group._id, playerId: player._id, insightKey: reviewed.insightKey, body: reviewed.body }) };
         break;
@@ -156,7 +174,12 @@ export const dispatch = internalMutation({
         break;
       }
     }
-    await ctx.db.insert("commandReceipts", { groupId: group._id, caseId: group.caseId, playerId: player._id, messageId: message._id, lineId: args.lineId, day: args.day, command: args.command, result: value });
+    const charged = value.kind !== "survey" && (value.kind !== "hint" || value.value);
+    const updatedGroup = await ctx.db.get(group._id);
+    if (!updatedGroup || updatedGroup.caseId !== group.caseId || updatedGroup.day !== args.day) throw new Error("Command context changed");
+    const daily = charged ? await dailyStatus(ctx, updatedGroup, player._id) : null;
+    await ctx.db.insert("commandReceipts", { groupId: group._id, caseId: group.caseId, playerId: player._id, messageId: message._id, lineId: args.lineId, day: args.day, command: args.command, result: value,
+      dailyTurn: daily?.counter?.turns, dailyTurnLimit: daily?.limit });
     return value;
   },
 });

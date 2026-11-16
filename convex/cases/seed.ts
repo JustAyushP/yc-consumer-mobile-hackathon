@@ -7,6 +7,7 @@ export const seed = internalMutation({
   handler: async (ctx) => {
     const c = VELVET_LANTERN;
     const existing = await ctx.db.query("cases").withIndex("by_key", (q) => q.eq("key", c.key)).first();
+    if (existing?.contentRevision !== undefined) throw new Error("Refusing to overwrite a versioned case");
     const caseFields = { key: c.key, title: c.title, setting: c.setting, victim: c.victim, logline: c.logline, culpritKey: c.culpritKey, reveal: c.reveal };
     const caseId = existing ? existing._id : await ctx.db.insert("cases", caseFields);
     if (existing) {
