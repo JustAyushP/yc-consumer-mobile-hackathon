@@ -102,7 +102,15 @@ it("runs the isolated SF case through seven flexible segments with three private
   await settleScheduled(t);
   expect((await talk(players[2])).guidance).toContain("fragments fell after the spill");
   await t.mutation(internal.game.engine.fastForwardDay, { groupId });
-  expect((await talk(players[0])).guidance).toContain("journey needs a record");
+  const pacingBeforePrivate = await t.run(async (ctx) => (await ctx.db.query("brainPacing").first())!.stateJson);
+  const privateMessage = await t.run(async (ctx) => ctx.db.insert("messages", { groupId, playerId: players[0], kind: "chat", source: "keiki", lineId: "2", body: "hello" }));
+  const privateDirective = await t.action(internal.ravo.consult.consult, { groupId, playerId: players[0], messageId: privateMessage, lineId: "2" });
+  expect(privateDirective.guidance).toContain("journey needs a record");
+  expect(privateDirective.nextQuestion).toBeUndefined();
+  expect(await t.run(async (ctx) => (await ctx.db.query("brainPacing").first())!.stateJson)).toBe(pacingBeforePrivate);
+  const dayTwo = await talk(players[0]);
+  expect(dayTwo.nextQuestion).toContain("d2q1:");
+  expect((await t.run(async (ctx) => JSON.parse((await ctx.db.query("brainPacing").first())!.stateJson))).interventions).toBe(1);
   const interviewMessage = await message(players[1], "interview");
   expect((await t.mutation(dispatch, { groupId, playerId: players[1], messageId: interviewMessage, lineId: "1", caseId, day: 2, command: { kind: "ability", targetKey: "s_leo" } })).kind).toBe("ability");
   await answer(players[1], "d2q1", "Leo's taxi was away across town");
@@ -138,8 +146,10 @@ it("runs the isolated SF case through seven flexible segments with three private
   expect((await t.query(api.game.viewer.history, { viewerToken: "sf-0" })).length).toBeGreaterThan(0);
   for (const lineId of ["2", "3"] as const) {
     const privateMessage = await t.run(async (ctx) => {
-      await ctx.db.insert("casts", { groupId, playerId: players[0], lineId, agentKey: "s_leo" });
-      return await ctx.db.insert("messages", { groupId, playerId: players[0], kind: "chat", source: "keiki", lineId, agentKey: "s_leo", intakeCaseId: caseId, intakeDay: 4, body: "accusation" });
+      const existing = await ctx.db.query("casts").withIndex("by_player_line", (q) => q.eq("playerId", players[0]).eq("lineId", lineId)).unique();
+      const agentKey = existing?.agentKey ?? "s_leo";
+      if (!existing) await ctx.db.insert("casts", { groupId, playerId: players[0], lineId, agentKey });
+      return await ctx.db.insert("messages", { groupId, playerId: players[0], kind: "chat", source: "keiki", lineId, agentKey, intakeCaseId: caseId, intakeDay: 4, body: "accusation" });
     });
     for (const suspectKey of ["s_margot", "s_leo"]) await expect(t.mutation(dispatch, { groupId, playerId: players[0], messageId: privateMessage, lineId, caseId, day: 4, command: { kind: "accusation", suspectKey, reasoning: "reason" } })).rejects.toThrow("Make accusations in the common conversation");
   }
