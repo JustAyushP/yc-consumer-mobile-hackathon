@@ -19,7 +19,7 @@ export const lines = query({
     const suspectLine = async (lineId: "2" | "3") => {
       const cast = await ctx.db.query("casts").withIndex("by_player_line", (q) => q.eq("playerId", player._id).eq("lineId", lineId)).unique();
       const suspect = cast ? suspects.find((s) => s.key === cast.agentKey) : suspects[(order * 2 + (lineId === "3" ? 1 : 0)) % Math.max(1, suspects.length)];
-      return { lineId, name: suspect?.name ?? (lineId === "2" ? "Suspect A" : "Suspect B"), title: suspect?.title ?? "" };
+      return { lineId, name: suspect?.name ?? (lineId === "2" ? "Vivian Cross" : "Leo Marlowe"), title: suspect?.title ?? "" };
     };
     return { lines: [{ lineId: "1" as const, name: "Sal", title: "The night bartender" }, await suspectLine("2"), await suspectLine("3")], day: group.day, progress: group.progress };
   },
