@@ -4,6 +4,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, MutationCtx } from "../_generated/server";
 import { groupPlayers, hintsLeft, weekOf } from "./lib";
 import { vMessageKind } from "../schema";
+import { consumeDailyTurn } from "./integration/daily";
 export { processConsult, processAnswer, applyDecision } from "./runtime";
 
 // Engine mutations: the only way game state changes. RAVO calls these, never the tables directly.
@@ -78,6 +79,7 @@ export const recordInsight = internalMutation({
     if (found.some((p) => p.insightKey === insightKey)) return false;
     const insights = await ctx.db.query("insights").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
     if (!insights.some((i) => i.key === insightKey)) return false;
+    if (playerId) await consumeDailyTurn(ctx, group, playerId);
     await ctx.db.insert("progress", { groupId, insightKey, playerId, day: group.day });
     const keys = new Set([...found.map((f) => f.insightKey), insightKey]);
     const total = insights.reduce((s, i) => s + i.weight, 0);
@@ -95,6 +97,7 @@ export const giveHint = internalMutation({
     if (!group || group.status !== "active" || (await ctx.db.get(playerId))?.groupId !== groupId) return false;
     group = await currentGroup(ctx, group);
     if ((await hintsLeft(ctx, group)) <= 0) return false;
+    await consumeDailyTurn(ctx, group, playerId);
     await ctx.db.insert("hints", { groupId, playerId, week: weekOf(group.day), day: group.day, insightKey, body });
     await say(ctx, groupId, "hint", body, playerId);
     return true;

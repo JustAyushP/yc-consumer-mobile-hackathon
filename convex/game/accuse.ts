@@ -4,12 +4,16 @@ import { Id } from "../_generated/dataModel";
 import { internalMutation, MutationCtx } from "../_generated/server";
 import { loadPlayer } from "./lib";
 import { currentGroup } from "./engine";
+import { consumeDailyTurn } from "./integration/daily";
 
 async function applyAccusation(ctx: MutationCtx, { playerId, suspectKey, reasoning }: { playerId: Id<"players">; suspectKey: string; reasoning: string }, emitChat: boolean) {
   const { player, group: loadedGroup } = await loadPlayer(ctx, playerId);
   const group = await currentGroup(ctx, loadedGroup);
   if (group.status !== "active") throw new Error("The case isn't open");
+  const answers = await ctx.db.query("answers").withIndex("by_group", (q) => q.eq("groupId", group._id)).collect();
+  if (answers.some((answer) => answer.score === undefined)) throw new Error("Answers are still awaiting scoring");
   const kase = (await ctx.db.get(group.caseId))!;
+  await consumeDailyTurn(ctx, group, playerId);
   if (emitChat) {
     await ctx.scheduler.runAfter(0, internal.chat.messages.postRavoMessage, {
       groupId: group._id,

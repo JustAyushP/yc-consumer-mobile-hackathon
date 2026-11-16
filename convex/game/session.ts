@@ -5,6 +5,7 @@ import { internalMutation, internalQuery, MutationCtx } from "../_generated/serv
 import { ROLES } from "./catalog";
 import { loadPlayer } from "./lib";
 import { currentGroup, projectedDay } from "./engine";
+import { consumeDailyTurn } from "./integration/daily";
 
 async function ensureSession(ctx: MutationCtx, group: Doc<"groups">, player: Doc<"players">) {
   const s = await ctx.db.query("sessions").withIndex("by_player_day", (q) => q.eq("playerId", player._id).eq("day", group.day)).first();
@@ -44,12 +45,18 @@ export const submitAnswer = internalMutation({
     if (group.status !== "active") throw new Error("The case isn't open");
     const questions = await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", group.caseId).eq("day", group.day)).collect();
     if (!questions.some((question) => question.key === questionKey)) throw new Error("That question is not open today");
-    const prior = (await ctx.db.query("answers").withIndex("by_player_day", (q) => q.eq("playerId", playerId).eq("day", group.day)).collect()).find(
+    const priorAnswers = await ctx.db.query("answers").withIndex("by_player_day", (q) => q.eq("playerId", playerId).eq("day", group.day)).collect();
+    const prior = priorAnswers.find(
       (a) => a.questionKey === questionKey,
     );
     if (prior) return prior._id;
-    await ensureSession(ctx, group, player);
-    const answerId = await ctx.db.insert("answers", { groupId: group._id, playerId, day: group.day, questionKey, text: text.trim() });
+    await consumeDailyTurn(ctx, group, playerId);
+    const session = await ensureSession(ctx, group, player);
+    const answerId = await ctx.db.insert("answers", { groupId: group._id, playerId, day: group.day, questionKey, text: text.trim(), dailyTurnCharged: true });
+    const required = questions.filter((question) => question.requiredForSession);
+    if (required.length && required.every((question) => question.key === questionKey || (priorAnswers.some((answer) => answer.questionKey === question.key)))) {
+      await ctx.db.patch(session._id, { completed: true, status: "completed" });
+    }
     await ctx.scheduler.runAfter(0, internal.ravo.entry.onAnswer, { answerId });
     return answerId;
   },
@@ -75,6 +82,7 @@ export const useAbility = internalMutation({
       result = s && { interrogator: s.interrogation, profiler: s.profile, archivist: s.records, forensic: s.records }[player.roleKey];
     }
     if (!result) throw new Error("Nothing to find there");
+    await consumeDailyTurn(ctx, group, playerId);
     await ctx.db.patch(session._id, { abilityTarget: targetKey, abilityResult: result });
     return result;
   },
