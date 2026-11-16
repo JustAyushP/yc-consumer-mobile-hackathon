@@ -15,7 +15,7 @@ export function configuredTransport() {
 
 export async function onboardingStatus(ctx: QueryCtx) {
   if (process.env.RAVO_ONBOARDING_ENABLED !== "true") return { enabled: false as const, reason: "disabled" as const };
-  if (process.env.RAVO_PLAYER_LINK_SAFE_HANDOFF_READY !== "true" || !configuredTransport()) return { enabled: false as const, reason: "unconfigured" as const };
+  if (process.env.RAVO_PLAYER_LINK_SAFE_HANDOFF_READY !== "true" || process.env.RAVO_PLAYER_LINK_VERIFIED_ENABLED !== "true" || !configuredTransport()) return { enabled: false as const, reason: "unconfigured" as const };
   const cases = await ctx.db.query("cases").withIndex("by_key", (q) => q.eq("key", "velvet-lantern")).take(2);
   if (cases.length !== 1 || !await verifiedSfCase(ctx, cases[0]._id)) return { enabled: false as const, reason: "unconfigured" as const };
   return { enabled: true as const, caseId: cases[0]._id };

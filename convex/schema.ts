@@ -335,6 +335,7 @@ export default defineSchema({
 
   demoOnboardingBudget: defineTable({
     key: v.literal("demo"),
+    day: v.number(),
     sessions: v.number(),
     groups: v.number(),
     hour: v.number(),

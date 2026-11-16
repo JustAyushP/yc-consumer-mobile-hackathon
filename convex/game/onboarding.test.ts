@@ -37,7 +37,7 @@ async function setup() {
   return { t, caseId };
 }
 
-function enable() { vi.stubEnv("RAVO_ONBOARDING_ENABLED", "true"); vi.stubEnv("RAVO_PLAYER_LINK_SAFE_HANDOFF_READY", "true"); }
+function enable() { vi.stubEnv("RAVO_ONBOARDING_ENABLED", "true"); vi.stubEnv("RAVO_PLAYER_LINK_SAFE_HANDOFF_READY", "true"); vi.stubEnv("RAVO_PLAYER_LINK_VERIFIED_ENABLED", "true"); }
 async function session(t: ReturnType<typeof convexTest<typeof schema.tables>>) {
   const value = await t.action(begin, {});
   if (!value.ok) throw new Error(`begin failed: ${value.code}`);
@@ -61,6 +61,9 @@ describe("demo onboarding and player links", () => {
     expect(await t.run(async (ctx) => ctx.db.query("demoOnboardingSessions").collect())).toEqual([]);
     enable();
     expect(await t.query(availability, {})).toEqual({ enabled: true });
+    vi.stubEnv("RAVO_PLAYER_LINK_VERIFIED_ENABLED", "false");
+    expect(await t.query(availability, {})).toEqual({ enabled: false, reason: "unconfigured" });
+    vi.stubEnv("RAVO_PLAYER_LINK_VERIFIED_ENABLED", "true");
     vi.stubEnv("KEIKI_DEMO_LINE_ID", "2");
     expect(await t.query(availability, {})).toEqual({ enabled: false, reason: "unconfigured" });
   });
@@ -107,15 +110,18 @@ describe("demo onboarding and player links", () => {
     const teamResult = await team(t);
     const startToken = token(teamResult.telegramUrl);
     const request = { ...transport("tg:tester"), startToken };
+    vi.stubEnv("RAVO_PLAYER_LINK_VERIFIED_ENABLED", "false");
     expect(await t.action(redeemVerified, request)).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
     expect(await t.action(redeemDemo, request)).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
     vi.stubEnv("RAVO_PLAYER_LINK_DEMO_ENABLED", "true");
-    expect(await t.action(redeemDemo, { ...request, agentId: "forged" })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
-    expect(await t.action(redeemDemo, { ...request, botId: "999" })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
-    expect(await t.action(redeemDemo, { ...request, conversationId: "not-private-tuple" })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
-    const [a, b] = await Promise.all([t.action(redeemDemo, request), t.action(redeemDemo, request)]);
+    vi.stubEnv("RAVO_PLAYER_LINK_VERIFIED_ENABLED", "true");
+    expect(await t.action(redeemDemo, request)).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
+    expect(await t.action(redeemVerified, { ...request, agentId: "forged" })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
+    expect(await t.action(redeemVerified, { ...request, botId: "999" })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
+    expect(await t.action(redeemVerified, { ...request, conversationId: "not-private-tuple" })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
+    const [a, b] = await Promise.all([t.action(redeemVerified, request), t.action(redeemVerified, request)]);
     expect([a, b].filter((item) => item.ok)).toHaveLength(1);
-    expect(await t.action(redeemDemo, { ...transport("tg:other"), startToken })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
+    expect(await t.action(redeemVerified, { ...transport("tg:other"), startToken })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
     const { botId: _, ...claimTransport } = transport("tg:tester");
     expect((await t.mutation(claim, { ...claimTransport, channel: "telegram", lineId: "1", eventKey: "new-event", body: "hello" })).status).toBe("claimed");
     expect((await t.mutation(claim, { ...claimTransport, senderId: "tg:other", channel: "telegram", lineId: "1", eventKey: "other-event", body: "hello" })).status).toBe("rejected");
@@ -133,10 +139,10 @@ describe("demo onboarding and player links", () => {
       return { playerId: player._id, groupId: player.groupId, other };
     });
     const request = { ...transport("tg:used"), startToken: token(first.telegramUrl) };
-    expect(await t.action(redeemDemo, request)).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
+    expect(await t.action(redeemVerified, request)).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
     expect((await t.run(async (ctx) => ctx.db.query("pendingPlayerLinks").first()))?.consumedAt).toBeUndefined();
     await t.run(async (ctx) => ctx.db.patch(old.playerId, { groupId: old.other }));
-    expect(await t.action(redeemDemo, { ...transport("tg:new"), startToken: token(first.telegramUrl) })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
+    expect(await t.action(redeemVerified, { ...transport("tg:new"), startToken: token(first.telegramUrl) })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
     expect(await t.action(mint, { groupId: old.groupId, playerId: old.playerId })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
   });
 
@@ -168,6 +174,20 @@ describe("demo onboarding and player links", () => {
     expect((await t.action(redeemVerified, { ...transport("tg:third"), startToken: token(other.telegramUrl) })).ok).toBe(true);
   });
 
+  it("allows only one simultaneous player claim for a single transport", async () => {
+    const { t } = await setup(); enable();
+    const first = await team(t);
+    const s = await session(t);
+    const second = await t.action(join, { session: s.session, joinCode: first.joinCode, playerName: "Second" });
+    if (!second.ok) throw new Error("join failed");
+    const [a, b] = await Promise.all([
+      t.action(redeemVerified, { ...transport("tg:shared"), startToken: token(first.telegramUrl) }),
+      t.action(redeemVerified, { ...transport("tg:shared"), startToken: token(second.telegramUrl) }),
+    ]);
+    expect([a, b].filter((item) => item.ok)).toHaveLength(1);
+    expect(await t.run(async (ctx) => (await ctx.db.query("keikiBindings").collect()).length)).toBe(1);
+  });
+
   it("rejects expired or solved links without consuming them", async () => {
     const { t } = await setup(); enable(); vi.stubEnv("RAVO_PLAYER_LINK_DEMO_ENABLED", "true");
     const first = await team(t);
@@ -176,11 +196,11 @@ describe("demo onboarding and player links", () => {
       return { groupId: player.groupId, playerId: player._id };
     });
     await t.run(async (ctx) => ctx.db.patch(ids.groupId, { status: "solved" }));
-    expect(await t.action(redeemDemo, { ...transport("tg:test"), startToken: token(first.telegramUrl) })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
+    expect(await t.action(redeemVerified, { ...transport("tg:test"), startToken: token(first.telegramUrl) })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
     expect((await t.run(async (ctx) => ctx.db.query("pendingPlayerLinks").first()))?.consumedAt).toBeUndefined();
     await t.run(async (ctx) => ctx.db.patch(ids.groupId, { status: "lobby" }));
     vi.setSystemTime(first.linkExpiresAt);
-    expect(await t.action(redeemDemo, { ...transport("tg:test"), startToken: token(first.telegramUrl) })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
+    expect(await t.action(redeemVerified, { ...transport("tg:test"), startToken: token(first.telegramUrl) })).toEqual({ ok: false, code: "LINK_UNAVAILABLE" });
     expect(await t.run(async (ctx) => (await ctx.db.query("keikiBindings").collect()).length)).toBe(0);
   });
 
@@ -195,6 +215,23 @@ describe("demo onboarding and player links", () => {
     expect(await t.action(join, { session: extra.session, joinCode: first.joinCode, playerName: "Overflow" })).toEqual({ ok: false, code: "rejected" });
     for (let i = 0; i < 13; i++) await session(t);
     expect(await t.action(begin, {})).toEqual({ ok: false, code: "rejected" });
+    vi.advanceTimersByTime(3600000);
+    expect((await t.action(begin, {})).ok).toBe(true);
     expect(await t.run(async (ctx) => (await ctx.db.query("players").collect()).length)).toBe(6);
+  });
+
+  it("resets the daily group budget without deleting existing groups", async () => {
+    const { t } = await setup(); enable();
+    for (let i = 0; i < 20; i++) {
+      const s = await session(t);
+      expect((await t.action(create, { session: s.session, groupName: `Team ${i}`, playerName: "Host" })).ok).toBe(true);
+    }
+    vi.advanceTimersByTime(3600000);
+    const extra = await session(t);
+    expect(await t.action(create, { session: extra.session, groupName: "Over budget", playerName: "Host" })).toEqual({ ok: false, code: "rejected" });
+    vi.advanceTimersByTime(86400000);
+    const next = await session(t);
+    expect((await t.action(create, { session: next.session, groupName: "Tomorrow", playerName: "Host" })).ok).toBe(true);
+    expect(await t.run(async (ctx) => (await ctx.db.query("groups").collect()).length)).toBe(21);
   });
 });

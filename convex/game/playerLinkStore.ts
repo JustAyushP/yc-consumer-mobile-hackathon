@@ -25,13 +25,12 @@ export const mint = internalMutation({
 });
 
 export const redeem = internalMutation({
-  args: { tokenHash: v.string(), mode: v.union(v.literal("verified"), v.literal("demo")), ...transport },
+  args: { tokenHash: v.string(), ...transport },
   returns: v.union(failure, v.object({ ok: v.literal(true), status: v.literal("linked") })),
   handler: async (ctx, args) => {
     const status = await onboardingStatus(ctx);
     const config = configuredTransport();
-    const enabled = args.mode === "verified" ? process.env.RAVO_PLAYER_LINK_VERIFIED_ENABLED : process.env.RAVO_PLAYER_LINK_DEMO_ENABLED;
-    if (!status.enabled || !config || enabled !== "true" || !/^[0-9a-f]{64}$/.test(args.tokenHash) || args.agentId !== config.agentId || args.botId !== config.botId ||
+    if (!status.enabled || !config || !/^[0-9a-f]{64}$/.test(args.tokenHash) || args.agentId !== config.agentId || args.botId !== config.botId ||
         !args.senderId || args.senderId !== args.senderId.trim() || args.senderId.length > 256 || args.conversationId !== JSON.stringify(["telegram", args.botId, args.senderId])) return { ok: false as const, code: "LINK_UNAVAILABLE" as const };
     const links = await ctx.db.query("pendingPlayerLinks").withIndex("by_token_hash", (q) => q.eq("tokenHash", args.tokenHash)).take(2);
     if (links.length !== 1) return { ok: false as const, code: "LINK_UNAVAILABLE" as const };

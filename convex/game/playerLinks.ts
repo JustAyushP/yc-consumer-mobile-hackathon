@@ -9,7 +9,7 @@ type Transport = { agentId: string; botId: string; conversationId: string; sende
 const failure = v.object({ ok: v.literal(false), code: v.literal("LINK_UNAVAILABLE") });
 const transport = { agentId: v.string(), botId: v.string(), conversationId: v.string(), senderId: v.string() };
 const mintRef = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; tokenHash: string }, { ok: false; code: "LINK_UNAVAILABLE" } | { ok: true; linkExpiresAt: number }>("game/playerLinkStore:mint");
-const redeemRef = makeFunctionReference<"mutation", Transport & { tokenHash: string; mode: "verified" | "demo" }, LinkResult>("game/playerLinkStore:redeem");
+const redeemRef = makeFunctionReference<"mutation", Transport & { tokenHash: string }, LinkResult>("game/playerLinkStore:redeem");
 
 export const mint = internalAction({
   args: { groupId: v.id("groups"), playerId: v.id("players") },
@@ -30,7 +30,7 @@ export const redeemVerified = internalAction({
   returns: v.union(failure, v.object({ ok: v.literal(true), status: v.literal("linked") })),
   handler: async (ctx, { startToken, ...args }) => {
     if (!/^p_[A-Za-z0-9_-]{43}$/.test(startToken)) return { ok: false as const, code: "LINK_UNAVAILABLE" as const };
-    try { return await ctx.runMutation(redeemRef, { ...args, tokenHash: await hashText(startToken), mode: "verified" }); }
+    try { return await ctx.runMutation(redeemRef, { ...args, tokenHash: await hashText(startToken) }); }
     catch { return { ok: false as const, code: "LINK_UNAVAILABLE" as const }; }
   },
 });
@@ -38,9 +38,5 @@ export const redeemVerified = internalAction({
 export const redeemDemo = internalAction({
   args: { startToken: v.string(), ...transport },
   returns: v.union(failure, v.object({ ok: v.literal(true), status: v.literal("linked") })),
-  handler: async (ctx, { startToken, ...args }) => {
-    if (!/^p_[A-Za-z0-9_-]{43}$/.test(startToken)) return { ok: false as const, code: "LINK_UNAVAILABLE" as const };
-    try { return await ctx.runMutation(redeemRef, { ...args, tokenHash: await hashText(startToken), mode: "demo" }); }
-    catch { return { ok: false as const, code: "LINK_UNAVAILABLE" as const }; }
-  },
+  handler: async () => ({ ok: false as const, code: "LINK_UNAVAILABLE" as const }),
 });

@@ -20,9 +20,12 @@ export const begin = internalMutation({
     if (!/^[0-9a-f]{64}$/.test(sessionHash) || await ctx.db.query("demoOnboardingSessions").withIndex("by_session_hash", (q) => q.eq("sessionHash", sessionHash)).first()) return { ok: false as const, code: "rejected" as const };
     const budget = await ctx.db.query("demoOnboardingBudget").withIndex("by_key", (q) => q.eq("key", "demo")).unique();
     const hour = Math.floor(Date.now() / 3600000);
+    const day = Math.floor(Date.now() / 86400000);
     const hourlySessions = budget?.hour === hour ? budget.hourlySessions : 0;
-    if ((budget?.sessions ?? 0) >= 100 || hourlySessions >= 20) return { ok: false as const, code: "rejected" as const };
-    const next = { key: "demo" as const, sessions: (budget?.sessions ?? 0) + 1, groups: budget?.groups ?? 0, hour, hourlySessions: hourlySessions + 1 };
+    const sessions = budget?.day === day ? budget.sessions : 0;
+    const groups = budget?.day === day ? budget.groups : 0;
+    if (sessions >= 100 || hourlySessions >= 20) return { ok: false as const, code: "rejected" as const };
+    const next = { key: "demo" as const, day, sessions: sessions + 1, groups, hour, hourlySessions: hourlySessions + 1 };
     if (budget) await ctx.db.patch(budget._id, next);
     else await ctx.db.insert("demoOnboardingBudget", next);
     const expiresAt = Date.now() + LINK_LIFETIME_MS;
@@ -59,7 +62,9 @@ export const complete = internalMutation({
     let joinCode;
     if (p.kind === "create") {
       const budget = await ctx.db.query("demoOnboardingBudget").withIndex("by_key", (q) => q.eq("key", "demo")).unique();
-      if (!budget || budget.groups >= 20) return { ok: false as const, code: "rejected" as const };
+      const day = Math.floor(Date.now() / 86400000);
+      const groups = budget?.day === day ? budget.groups : 0;
+      if (!budget || groups >= 20) return { ok: false as const, code: "rejected" as const };
       for (let i = 0; i < 20; i++) {
         const candidate = makeCode();
         if (!await ctx.db.query("groups").withIndex("by_joinCode", (q) => q.eq("joinCode", candidate)).first()) { joinCode = candidate; break; }
@@ -68,7 +73,7 @@ export const complete = internalMutation({
       groupId = await ctx.db.insert("groups", { name: p.groupName, joinCode, caseId: status.caseId, status: "lobby", day: 0, progress: 0, wrongAccusations: 0, demoOnboarding: true });
       playerId = await ctx.db.insert("players", { groupId, name: p.playerName, joinedDay: 0, lateJoiner: false });
       await ctx.db.patch(groupId, { hostId: playerId });
-      await ctx.db.patch(budget._id, { groups: budget.groups + 1 });
+      await ctx.db.patch(budget._id, { day, groups: groups + 1, sessions: budget.day === day ? budget.sessions : 0 });
     } else {
       const groups = await ctx.db.query("groups").withIndex("by_joinCode", (q) => q.eq("joinCode", p.joinCode)).take(2);
       const candidate = groups.length === 1 ? groups[0] : null;
