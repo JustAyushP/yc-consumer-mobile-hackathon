@@ -20,6 +20,7 @@ http.route({
     agentId: process.env.KEIKI_DEMO_AGENT_ID,
     lineId: process.env.KEIKI_DEMO_LINE_ID,
     telegramBotId: process.env.KEIKI_DEMO_TELEGRAM_BOT_ID,
+    diagnosticToolKeyReference: process.env.KEIKI_DIAGNOSTIC_TOOL_KEY_REFERENCE,
   }, {
     claim: (args) => ctx.runMutation(internal.chat.keikiIngress.claim, args),
     consult: (args) => ctx.runAction(internal.ravo.consult.consult, args),
