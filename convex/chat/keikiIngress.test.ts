@@ -93,8 +93,8 @@ describe("fixed validation reasons without payload disclosure", () => {
     [{ ...payload, context: { ...payload.context, phone: 123 } }, "invalid_phone"],
     [{ ...payload, context: { ...payload.context, phone: " " } }, "invalid_phone"],
     [{ ...payload, context: { ...payload.context, phone: "x".repeat(257) } }, "invalid_phone"],
-    [{ ...payload, context: { ...payload.context, channel: "fixture-private-value" } }, "invalid_channel"],
-    [{ ...payload, context: { ...payload.context, channel: { nested: "fixture-private-value" } } }, "invalid_channel"],
+    [{ ...payload, context: { ...payload.context, channel: "internal" } }, "invalid_channel"],
+    [{ ...payload, context: { ...payload.context, channel: { channel: "dashboard" } } }, "invalid_channel"],
   ] as const)("returns only a fixed reason for malformed payload %#", async (body, reason) => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { send, state, consult, deps } = await setup();
@@ -184,10 +184,8 @@ describe("unconsumed context metadata", () => {
 
   it.each([
     [{ channel: "telegram", userId: "fixture-user-one" }, "invalid_phone"],
-    [{ phone: "fixture-user-one", transport: "telegram" }, "invalid_channel"],
     [{ phone: 123, channel: "telegram", senderId: "fixture-user-one" }, "invalid_phone"],
-    [{ phone: "fixture-user-one", channel: { name: "telegram" } }, "invalid_channel"],
-  ] as const)("does not substitute metadata for required phone/channel %#", async (context, reason) => {
+  ] as const)("does not substitute metadata for required phone %#", async (context, reason) => {
     const { send, consult, state } = await setup();
     const response = await send(request({ ...payload, context }));
     expect(response.status).toBe(400);
@@ -256,11 +254,30 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
     expect(consult).not.toHaveBeenCalled();
   });
 
-  it.each(["imessage", "whatsapp", "Telegram", "", "slack"])("rejects non-Telegram channel %j", async (channel) => {
+  it.each([undefined, null, 123, false, [], {}, "imessage", "whatsapp", "Telegram", "", "slack", "x".repeat(65), { channel: "telegram", userId: "private-extra" }, { channel: "slack", userId: "private-extra" }])("pins Telegram independently of channel metadata %j", async (channel) => {
+    const { send, state, consult, deps, playerId, groupId } = await setup();
+    const claim = vi.spyOn(deps, "claim");
+    const response = await send(request({ ...payload, context: { ...payload.context, channel } }));
+    expect(response.status).toBe(200);
+    expect(claim.mock.calls[0][0]).toEqual({
+      agentId: config.agentId, channel: "telegram", senderId: payload.context.phone, lineId: "1",
+      conversationId: JSON.stringify(["telegram", telegramBotId, payload.context.phone]),
+      eventKey: JSON.stringify(["keiki-demo-trace", config.agentId, "telegram", JSON.stringify(["telegram", telegramBotId, payload.context.phone]), payload.context.phone, "1", "demo-trace"]),
+      body: payload.input.playerMessage,
+    });
+    expect(consult).toHaveBeenCalledExactlyOnceWith({ groupId, playerId, messageId: (await state()).messages[0]._id, lineId: "1", agentKey: "common" });
+    expect(JSON.stringify({ claims: claim.mock.calls, consults: consult.mock.calls, saved: await state() })).not.toContain("private-extra");
+    expect((await send(request())).status).toBe(409);
+    expect(consult).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["internal", "dashboard", { channel: "internal" }, { channel: "dashboard" }])("rejects explicit internal/dashboard channel before normalization %j", async (channel) => {
     const { send, state, consult } = await setup();
-    expect((await send(request({ ...payload, context: { ...payload.context, channel } }))).status).toBe(400);
-    expect((await state()).messages).toHaveLength(0);
+    const response = await send(request({ ...payload, context: { ...payload.context, channel } }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid request", reason: "invalid_channel" });
     expect(consult).not.toHaveBeenCalled();
+    expect((await state()).messages).toHaveLength(0);
   });
 
   it("cannot reuse the same sender's binding or completed trace under a different configured bot", async () => {
@@ -317,7 +334,6 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
     { ...payload, playerId: "other" },
     { ...payload, context: { phone: "", channel: "telegram" } },
     { ...payload, context: { phone: "x".repeat(257), channel: "telegram" } },
-    { ...payload, context: { ...payload.context, channel: "x".repeat(65) } },
     { ...payload, input: { ...payload.input, playerMessage: " " } },
     { ...payload, input: { ...payload.input, playerMessage: "x".repeat(8001) } },
     { ...payload, input: { ...payload.input, summary: "x".repeat(1001) } },
@@ -518,7 +534,7 @@ describe("demo ingress with fake hosted transport and real deterministic RAVO co
     vi.stubEnv("KEIKI_DEMO_AGENT_ID", "demo-agent");
     vi.stubEnv("KEIKI_DEMO_LINE_ID", "1");
     vi.stubEnv("KEIKI_DEMO_TELEGRAM_BOT_ID", telegramBotId);
-    const req = request({ ...payload, context: { ...payload.context, metadata: { providerExtension: "fixture-private-extra" } } });
+    const req = request({ ...payload, context: { phone: payload.context.phone, metadata: { providerExtension: "fixture-private-extra" } } });
     const init = { method: "POST", headers: req.headers, body: await req.text() };
     const response = await t.fetch(`/keiki/consult${toolQuery}`, init);
     expect(response.status).toBe(200);
