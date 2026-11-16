@@ -68,6 +68,98 @@ async function setup(realAuthorization = false) {
   return { t, ...ids, deps, consult, authorize, complete, send, state };
 }
 
+describe("optional rejected-key reference diagnostic with offline fixtures", () => {
+  const reference = "00000000-0000-4000-8000-000000000001";
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    [reference, true],
+    ["00000000-0000-4000-8000-000000000002", false],
+    [null, false],
+    ["", false],
+    [`Bearer ${reference}`, false],
+    [`"${reference}"`, false],
+    [`${reference}, ${reference}`, false],
+  ] as const)("compares rejected header %s without accepting it", async (key, matches) => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, state, deps, consult, complete, authorize } = await setup();
+    const claim = vi.spyOn(deps, "claim");
+    const uncertain = vi.spyOn(deps, "uncertain");
+    const before = await state();
+    const req = request(payload, { "X-Orchid-Api-Key": key, Authorization: "Bearer fixture-private-value", "X-Private-Fixture": "private-header-value" }, `${toolQuery}&privateQuery=fixture-query-value`);
+    const readBody = vi.spyOn(req, "text");
+    const response = await send(req, { ...config, diagnosticToolKeyReference: reference });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Unauthorized" });
+    expect(readBody).not.toHaveBeenCalled();
+    for (const fn of [claim, consult, complete, authorize, uncertain]) expect(fn).not.toHaveBeenCalled();
+    expect(await state()).toEqual(before);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][0]).toBe("keiki-consult-auth-rejected");
+    const data = JSON.parse(log.mock.calls[0][1]);
+    expect(Object.keys(data).sort()).toEqual(["present", "presentedKeyMatchesToolReference"]);
+    expect(data.presentedKeyMatchesToolReference).toBe(matches);
+    expect(Object.values(data.present).every((value) => typeof value === "boolean")).toBe(true);
+    const output = JSON.stringify(log.mock.calls);
+    for (const value of [reference, "fixture-tool-key", "fixture-private-value", "private-header-value", "fixture-query-value", payload.context.phone, payload.input.playerMessage, "example.test", "x-private-fixture"]) {
+      expect(output).not.toContain(value);
+    }
+  });
+
+  it.each([undefined, "", " ", "not-a-uuid", `${reference}\n`, ` ${reference}`, reference.replaceAll("-", "")])("omits comparison for absent or malformed config %s", async (diagnosticToolKeyReference) => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, state, consult } = await setup();
+    const before = await state();
+    expect((await send(request(payload, { "X-Orchid-Api-Key": reference }), { ...config, diagnosticToolKeyReference })).status).toBe(401);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(Object.keys(JSON.parse(log.mock.calls[0][1]))).toEqual(["present"]);
+    expect(await state()).toEqual(before);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it.each([reference, "malformed", undefined])("leaves real authentication unchanged with diagnostic config %s", async (diagnosticToolKeyReference) => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, state, consult } = await setup();
+    const before = await state();
+    expect((await send(request({}), { ...config, diagnosticToolKeyReference })).status).toBe(400);
+    expect(log).not.toHaveBeenCalled();
+    expect(consult).not.toHaveBeenCalled();
+    expect(await state()).toEqual(before);
+    expect((await send(request(), { ...config, diagnosticToolKeyReference })).status).toBe(200);
+    expect(log).not.toHaveBeenCalled();
+    expect(consult).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not compare or log when ingress is disabled", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, state } = await setup();
+    const before = await state();
+    expect((await send(request(payload, { "X-Orchid-Api-Key": reference }), { ...config, enabled: "false", diagnosticToolKeyReference: reference })).status).toBe(503);
+    expect(log).not.toHaveBeenCalled();
+    expect(await state()).toEqual(before);
+  });
+
+  it("wires the optional env through the real HTTP route without changing rejection", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { t, state } = await setup();
+    vi.stubEnv("KEIKI_DEMO_INGRESS_ENABLED", "true");
+    vi.stubEnv("KEIKI_TOOL_API_KEY", config.apiKey!);
+    vi.stubEnv("KEIKI_DEMO_AGENT_ID", config.agentId!);
+    vi.stubEnv("KEIKI_DEMO_LINE_ID", "1");
+    vi.stubEnv("KEIKI_DEMO_TELEGRAM_BOT_ID", telegramBotId);
+    vi.stubEnv("KEIKI_DIAGNOSTIC_TOOL_KEY_REFERENCE", reference);
+    const before = await state();
+    const req = request(payload, { "X-Orchid-Api-Key": reference });
+    const response = await t.fetch(`/keiki/consult${toolQuery}`, { method: "POST", headers: req.headers, body: await req.text() });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Unauthorized" });
+    expect(JSON.parse(log.mock.calls[0][1]).presentedKeyMatchesToolReference).toBe(true);
+    expect(await state()).toEqual(before);
+    expect((await t.fetch("/keiki/turn", { method: "POST" })).status).toBe(503);
+  });
+});
+
 describe("demo ingress with fake hosted transport, fake master, and fake authorization", () => {
   it.each([undefined, "", "false", "TRUE"])("fails closed with enabled=%s", async (enabled) => {
     const { send, state, consult } = await setup();

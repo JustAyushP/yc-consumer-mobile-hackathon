@@ -40,6 +40,7 @@ export type DemoConfig = {
   agentId?: string;
   lineId?: string;
   telegramBotId?: string;
+  diagnosticToolKeyReference?: string;
 };
 
 function json(value: unknown, status: number) {
@@ -88,7 +89,11 @@ export async function handleConsult(request: Request, config: DemoConfig, deps: 
       ["x-orchid-api-key", "x-orchid-trace-id", "x-orchid-internal", "authorization", "x-orchid-signature", "x-orchid-timestamp", "x-keiki-signature", "x-keiki-timestamp", "x-signature", "x-hub-signature-256", "content-type"]
         .map((name) => [name, request.headers.has(name)]),
     );
-    console.log("keiki-consult-auth-rejected", JSON.stringify({ present }));
+    const reference = config.diagnosticToolKeyReference;
+    const comparison = typeof reference === "string" && reference.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reference)
+      ? { presentedKeyMatchesToolReference: key !== null && key !== "" && await constantTimeEqual(key, reference) }
+      : {};
+    console.log("keiki-consult-auth-rejected", JSON.stringify({ present, ...comparison }));
     return json({ error: "Unauthorized" }, 401);
   }
   if (request.headers.has("X-Orchid-Internal")) return json({ error: "Dashboard turns are not supported" }, 403);
