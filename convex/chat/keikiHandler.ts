@@ -92,15 +92,16 @@ export async function handleConsult(request: Request, config: DemoConfig, deps: 
   if (!record(payload.context)) return json({ error: "Invalid request", reason: "invalid_context" }, 400);
   const { input, context } = payload;
   if ("internal" in context) return json({ error: "Dashboard turns are not supported" }, 403);
+  const declaredChannel = record(context.channel) ? context.channel.channel : context.channel;
+  if (declaredChannel === "internal" || declaredChannel === "dashboard") return json({ error: "Invalid request", reason: "invalid_channel" }, 400);
   if (!only(input, ["playerMessage", "summary", "intent"])) return json({ error: "Invalid request", reason: "unsupported_input_fields" }, 400);
   if (!nonempty(input.playerMessage) || input.playerMessage.length > 8000) return json({ error: "Invalid request", reason: "invalid_player_message" }, 400);
   if (typeof input.summary !== "string" || input.summary.length > 1000) return json({ error: "Invalid request", reason: "invalid_summary" }, 400);
   if (typeof input.intent !== "string" || !["theory", "question", "answer", "chat", "join"].includes(input.intent)) return json({ error: "Invalid request", reason: "invalid_intent" }, 400);
   if (!nonempty(context.phone) || context.phone.length > 256) return json({ error: "Invalid request", reason: "invalid_phone" }, 400);
-  if (context.channel !== "telegram") return json({ error: "Invalid request", reason: "invalid_channel" }, 400);
   const transport: Transport = {
     agentId: config.agentId,
-    channel: context.channel,
+    channel: "telegram",
     conversationId: JSON.stringify(["telegram", config.telegramBotId, context.phone]),
     senderId: context.phone,
     lineId: config.lineId,
