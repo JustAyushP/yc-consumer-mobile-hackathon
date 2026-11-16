@@ -10,7 +10,7 @@ import { handleConsult, type DemoConfig, type Dependencies } from "./keikiHandle
 
 const telegramBotId = "1000000001";
 const toolQuery = `?lineId=1&botId=${telegramBotId}`;
-const config: DemoConfig = { enabled: "true", apiKey: "fixture-tool-key", agentId: "demo-agent", lineId: "1", telegramBotId };
+const config: DemoConfig = { enabled: "true", agentId: "demo-agent", lineId: "1", telegramBotId };
 const payload = {
   input: { playerMessage: "  My exact question.\n", summary: "A question", intent: "question" },
   context: { phone: "fixture-user-one", channel: "telegram" },
@@ -19,7 +19,7 @@ const payload = {
 afterEach(() => vi.unstubAllEnvs());
 
 function request(body: unknown = payload, headers: Record<string, string | null> = {}, query = toolQuery) {
-  const values = new Headers({ "content-type": "application/json", "X-Orchid-Api-Key": "fixture-tool-key", "X-Orchid-Trace-Id": "demo-trace" });
+  const values = new Headers({ "content-type": "application/json", "X-Orchid-Trace-Id": "demo-trace" });
   for (const [key, value] of Object.entries(headers)) {
     if (value === null) values.delete(key);
     else values.set(key, value);
@@ -68,95 +68,42 @@ async function setup(realAuthorization = false) {
   return { t, ...ids, deps, consult, authorize, complete, send, state };
 }
 
-describe("optional rejected-key reference diagnostic with offline fixtures", () => {
-  const reference = "00000000-0000-4000-8000-000000000001";
-
+describe("unauthenticated demo endpoint with fake transport and fake Brain", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it.each([
-    [reference, true],
-    ["00000000-0000-4000-8000-000000000002", false],
-    [null, false],
-    ["", false],
-    [`Bearer ${reference}`, false],
-    [`"${reference}"`, false],
-    [`${reference}, ${reference}`, false],
-  ] as const)("compares rejected header %s without accepting it", async (key, matches) => {
+  it.each([null, "", "wrong", "Bearer fixture-key", "00000000-0000-4000-8000-000000000001"])("ignores legacy key %s and retains the real claim/complete/replay path", async (key) => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const { send, state, deps, consult, complete, authorize } = await setup();
-    const claim = vi.spyOn(deps, "claim");
-    const uncertain = vi.spyOn(deps, "uncertain");
-    const before = await state();
-    const req = request(payload, { "X-Orchid-Api-Key": key, Authorization: "Bearer fixture-private-value", "X-Private-Fixture": "private-header-value" }, `${toolQuery}&privateQuery=fixture-query-value`);
-    const readBody = vi.spyOn(req, "text");
-    const response = await send(req, { ...config, diagnosticToolKeyReference: reference });
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "Unauthorized" });
-    expect(readBody).not.toHaveBeenCalled();
-    for (const fn of [claim, consult, complete, authorize, uncertain]) expect(fn).not.toHaveBeenCalled();
-    expect(await state()).toEqual(before);
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(log.mock.calls[0][0]).toBe("keiki-consult-auth-rejected");
-    const data = JSON.parse(log.mock.calls[0][1]);
-    expect(Object.keys(data).sort()).toEqual(["present", "presentedKeyMatchesToolReference"]);
-    expect(data.presentedKeyMatchesToolReference).toBe(matches);
-    expect(Object.values(data.present).every((value) => typeof value === "boolean")).toBe(true);
-    const output = JSON.stringify(log.mock.calls);
-    for (const value of [reference, "fixture-tool-key", "fixture-private-value", "private-header-value", "fixture-query-value", payload.context.phone, payload.input.playerMessage, "example.test", "x-private-fixture"]) {
-      expect(output).not.toContain(value);
-    }
-  });
-
-  it.each([undefined, "", " ", "not-a-uuid", `${reference}\n`, ` ${reference}`, reference.replaceAll("-", "")])("omits comparison for absent or malformed config %s", async (diagnosticToolKeyReference) => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const { send, state, consult } = await setup();
-    const before = await state();
-    expect((await send(request(payload, { "X-Orchid-Api-Key": reference }), { ...config, diagnosticToolKeyReference })).status).toBe(401);
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(Object.keys(JSON.parse(log.mock.calls[0][1]))).toEqual(["present"]);
-    expect(await state()).toEqual(before);
-    expect(consult).not.toHaveBeenCalled();
-  });
-
-  it.each([reference, "malformed", undefined])("leaves real authentication unchanged with diagnostic config %s", async (diagnosticToolKeyReference) => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const { send, state, consult } = await setup();
-    const before = await state();
-    expect((await send(request({}), { ...config, diagnosticToolKeyReference })).status).toBe(400);
-    expect(log).not.toHaveBeenCalled();
-    expect(consult).not.toHaveBeenCalled();
-    expect(await state()).toEqual(before);
-    expect((await send(request(), { ...config, diagnosticToolKeyReference })).status).toBe(200);
-    expect(log).not.toHaveBeenCalled();
+    const { send, state, consult, complete, authorize, playerId } = await setup();
+    const response = await send(request(payload, { "X-Orchid-Api-Key": key, Authorization: "Bearer fixture-private-value" }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ character: { agentKey: "common", name: "Fixture actor" }, guidance: `Private fixture for ${playerId}` });
     expect(consult).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not compare or log when ingress is disabled", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const { send, state } = await setup();
-    const before = await state();
-    expect((await send(request(payload, { "X-Orchid-Api-Key": reference }), { ...config, enabled: "false", diagnosticToolKeyReference: reference })).status).toBe(503);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(authorize).toHaveBeenCalledTimes(1);
     expect(log).not.toHaveBeenCalled();
-    expect(await state()).toEqual(before);
+    expect((await state()).receipts[0].status).toBe("completed");
+    expect((await send(request(payload, { "X-Orchid-Api-Key": key }))).status).toBe(409);
+    expect(consult).toHaveBeenCalledTimes(1);
+    expect((await state()).messages).toHaveLength(1);
   });
 
-  it("wires the optional env through the real HTTP route without changing rejection", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const { t, state } = await setup();
-    vi.stubEnv("KEIKI_DEMO_INGRESS_ENABLED", "true");
-    vi.stubEnv("KEIKI_TOOL_API_KEY", config.apiKey!);
-    vi.stubEnv("KEIKI_DEMO_AGENT_ID", config.agentId!);
-    vi.stubEnv("KEIKI_DEMO_LINE_ID", "1");
-    vi.stubEnv("KEIKI_DEMO_TELEGRAM_BOT_ID", telegramBotId);
-    vi.stubEnv("KEIKI_DIAGNOSTIC_TOOL_KEY_REFERENCE", reference);
-    const before = await state();
-    const req = request(payload, { "X-Orchid-Api-Key": reference });
-    const response = await t.fetch(`/keiki/consult${toolQuery}`, { method: "POST", headers: req.headers, body: await req.text() });
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "Unauthorized" });
-    expect(JSON.parse(log.mock.calls[0][1]).presentedKeyMatchesToolReference).toBe(true);
-    expect(await state()).toEqual(before);
-    expect((await t.fetch("/keiki/turn", { method: "POST" })).status).toBe(503);
+  it("still validates payload before claiming and rejects unknown bindings without any credential", async () => {
+    const { send, state, consult } = await setup();
+    expect((await send(request({}))).status).toBe(400);
+    expect((await send(request({ ...payload, context: { ...payload.context, phone: "unbound-sender" } }))).status).toBe(403);
+    expect((await state()).messages).toHaveLength(0);
+    expect((await state()).receipts).toHaveLength(0);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it("documents that binding checks do not authenticate a caller who spoofs a known sender", async () => {
+    const { send, playerId, secondPlayerId } = await setup();
+    const first = await send(request());
+    const second = await send(request({ ...payload, context: { ...payload.context, phone: "fixture-user-two" } }));
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect((await first.json()).guidance).toBe(`Private fixture for ${playerId}`);
+    expect((await second.json()).guidance).toBe(`Private fixture for ${secondPlayerId}`);
   });
 });
 
@@ -168,7 +115,7 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
     expect(consult).not.toHaveBeenCalled();
   });
 
-  it.each(["apiKey", "agentId", "lineId", "telegramBotId"] as const)("fails closed without %s", async (key) => {
+  it.each(["agentId", "lineId", "telegramBotId"] as const)("fails closed without %s", async (key) => {
     const { send } = await setup();
     expect((await send(request(), { ...config, [key]: undefined })).status).toBe(503);
   });
@@ -199,41 +146,6 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
     expect(consult).toHaveBeenCalledTimes(1);
   });
 
-  it.each([null, "wrong", "fixture-tool-key-longer"])("rejects invalid legacy auth %s", async (key) => {
-    const { send, state, consult } = await setup();
-    expect((await send(request(payload, { "X-Orchid-Api-Key": key }))).status).toBe(401);
-    expect((await state()).messages).toHaveLength(0);
-    expect(consult).not.toHaveBeenCalled();
-  });
-
-  it("logs only allowlisted auth-header presence booleans when rejecting", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const { send } = await setup();
-    const secretHeaders = { "X-Orchid-Api-Key": "fixture-tool-kez", "X-Orchid-Trace-Id": "trace-secret-value", Authorization: "Bearer secret-bearer", "X-Unlisted-Header": "unlisted-secret" };
-    expect((await send(request(payload, secretHeaders))).status).toBe(401);
-    expect((await send(request(payload, { "X-Orchid-Api-Key": null }))).status).toBe(401);
-    const lines = log.mock.calls.filter(([label]) => label === "keiki-consult-auth-rejected").map(([, body]) => String(body));
-    log.mockRestore();
-    expect(lines).toHaveLength(2);
-    const [padded, absent] = lines.map((line) => JSON.parse(line));
-    expect(padded).toMatchObject({ present: { "x-orchid-api-key": true, "x-orchid-trace-id": true, authorization: true, "x-orchid-signature": false, "x-keiki-timestamp": false } });
-    expect(absent).toMatchObject({ present: { "x-orchid-api-key": false } });
-    expect(Object.keys(padded)).toEqual(["present"]);
-    const everything = lines.join("\n");
-    for (const secret of ["fixture-tool-ke", "trace-secret-value", "secret-bearer", "unlisted", "fixture-user-one", "My exact question"]) expect(everything).not.toContain(secret);
-  });
-
-  it("passes auth with the configured key and fails later on validation without logging a rejection", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const { send, state, consult } = await setup();
-    const response = await send(request({}));
-    const rejected = log.mock.calls.some(([label]) => label === "keiki-consult-auth-rejected");
-    log.mockRestore();
-    expect(response.status).toBe(400);
-    expect(rejected).toBe(false);
-    expect((await state()).messages).toHaveLength(0);
-    expect(consult).not.toHaveBeenCalled();
-  });
 
   it.each([
     "",
@@ -474,7 +386,8 @@ describe("demo ingress with fake hosted transport and real deterministic RAVO co
   it("wires the real HTTP route through empty reviewed knowledge, initial authorization, and rejected completed replay", async () => {
     const { t, state } = await setup(true);
     vi.stubEnv("KEIKI_DEMO_INGRESS_ENABLED", "true");
-    vi.stubEnv("KEIKI_TOOL_API_KEY", "fixture-tool-key");
+    vi.stubEnv("KEIKI_TOOL_API_KEY", undefined);
+    vi.stubEnv("KEIKI_DIAGNOSTIC_TOOL_KEY_REFERENCE", undefined);
     vi.stubEnv("KEIKI_DEMO_AGENT_ID", "demo-agent");
     vi.stubEnv("KEIKI_DEMO_LINE_ID", "1");
     vi.stubEnv("KEIKI_DEMO_TELEGRAM_BOT_ID", telegramBotId);
