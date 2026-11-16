@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 import { MAX_PLAYERS } from "./catalog";
-import { currentGroup } from "./engine";
+import { projectedDay } from "./engine";
 import { makeCode } from "./lib";
 import { configuredTransport, LINK_LIFETIME_MS, onboardingStatus } from "./playerLinkShared";
 
@@ -76,14 +76,13 @@ export const complete = internalMutation({
         await ctx.db.patch(session._id, { failedJoins: session.failedJoins + 1 });
         return { ok: false as const, code: "rejected" as const };
       }
-      const group = await currentGroup(ctx, candidate);
-      if (group.status === "solved" || (await ctx.db.query("players").withIndex("by_group", (q) => q.eq("groupId", group._id)).take(MAX_PLAYERS)).length >= MAX_PLAYERS) {
+      if ((await ctx.db.query("players").withIndex("by_group", (q) => q.eq("groupId", candidate._id)).take(MAX_PLAYERS)).length >= MAX_PLAYERS) {
         await ctx.db.patch(session._id, { failedJoins: session.failedJoins + 1 });
         return { ok: false as const, code: "rejected" as const };
       }
-      groupId = group._id;
-      joinCode = group.joinCode;
-      playerId = await ctx.db.insert("players", { groupId, name: p.playerName, joinedDay: group.day, lateJoiner: group.status === "active" });
+      groupId = candidate._id;
+      joinCode = candidate.joinCode;
+      playerId = await ctx.db.insert("players", { groupId, name: p.playerName, joinedDay: projectedDay(candidate), lateJoiner: candidate.status === "active" });
     }
     const linkId = await ctx.db.insert("pendingPlayerLinks", { tokenHash: args.linkHash, groupId, playerId, agentId: config.agentId, botId: config.botId, lineId: "1", expiresAt: session.expiresAt });
     const viewerId = await ctx.db.insert("viewerTokens", { token: args.viewerToken, groupId, playerId, expiresAt: Date.now() + 14 * 86400000 });
