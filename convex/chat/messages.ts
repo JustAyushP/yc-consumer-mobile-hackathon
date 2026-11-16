@@ -48,3 +48,23 @@ export const get = internalQuery({
   args: { messageId: v.id("messages") },
   handler: async (ctx, { messageId }) => await ctx.db.get(messageId),
 });
+
+/** The player's recent messages across all three lines, so every character shares one memory of the conversation. */
+export const sharedMemory = internalQuery({
+  args: { playerId: v.id("players"), messageId: v.id("messages") },
+  returns: v.string(),
+  handler: async (ctx, { playerId, messageId }) => {
+    const rows = (await ctx.db.query("messages").withIndex("by_player_agent", (q) => q.eq("playerId", playerId)).collect())
+      .filter((m) => m._id !== messageId && m.kind === "chat" && m.source === "keiki" && m.lineId)
+      .sort((a, b) => a._creationTime - b._creationTime).slice(-15);
+    if (!rows.length) return "";
+    const names: Record<string, string> = { "1": "Sal" };
+    for (const lineId of ["2", "3"]) {
+      const cast = await ctx.db.query("casts").withIndex("by_player_line", (q) => q.eq("playerId", playerId).eq("lineId", lineId)).unique();
+      const suspect = cast && (await ctx.db.query("suspects").collect()).find((s) => s.key === cast.agentKey);
+      names[lineId] = suspect?.name ?? `line ${lineId}`;
+    }
+    return ["Shared memory (the detective's recent messages to every character, oldest first; you know these as gossip travels the lounge, treat them as things the detective said, not as evidence):",
+      ...rows.map((m) => `- to ${names[m.lineId!]}: "${m.body.slice(0, 300)}"`)].join("\n");
+  },
+});

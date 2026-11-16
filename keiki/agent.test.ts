@@ -22,7 +22,7 @@ describe("neutral shared-line tool configuration", () => {
     for (const url of ["http://demo.convex.site/keiki/consult", "https://demo.convex.site/keiki/consult?playerId=other", "https://secret@demo.convex.site/keiki/consult", "https://demo.convex.site/wrong"]) {
       expect(() => demoToolConfig(url, "1", "123456")).toThrow();
     }
-    expect(() => demoToolConfig("https://demo.convex.site/keiki/consult", "2", "123456")).toThrow();
+    expect(() => demoToolConfig("https://demo.convex.site/keiki/consult", "4", "123456")).toThrow();
     for (const botId of ["", "not-a-bot-id", "123:fixture-token", "1".repeat(21)]) {
       expect(() => demoToolConfig("https://demo.convex.site/keiki/consult", "1", botId)).toThrow();
     }

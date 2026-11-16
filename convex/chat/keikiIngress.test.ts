@@ -615,7 +615,7 @@ describe("demo ingress with fake hosted transport and real deterministic RAVO co
     const realConsult = vi.fn<Dependencies["consult"]>(async (args) => {
       const directive = await t.action(internal.ravo.consult.consult, args);
       directiveJson = JSON.stringify(directive);
-      expect(await t.query(internal.ravo.consult.authorizeCachedDirective, { ...args, directiveJson })).toEqual({ authorized: true });
+      expect(await t.query(internal.ravo.consult.authorizeCachedDirective, { ...args, agentKey: args.agentKey ?? "", directiveJson })).toEqual({ authorized: true });
       await t.run(async (ctx) => ctx.db.patch(groupId, { status: "solved" }));
       return directive;
     });

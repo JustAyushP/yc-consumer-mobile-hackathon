@@ -20,7 +20,8 @@ export const claim = internalMutation({
     v.object({ status: v.literal("claimed"), receiptId: v.id("keikiReceipts"), messageId: v.id("messages"), groupId: v.id("groups"), playerId: v.id("players") }),
   ),
   handler: async (ctx, args): Promise<Claim> => {
-    if (args.lineId !== "1") return { status: "rejected" };
+    if (!["1", "2", "3"].includes(args.lineId)) return { status: "rejected" };
+    const agentKey = args.lineId === "1" ? "common" : undefined;
     const bindings = await ctx.db.query("keikiBindings").withIndex("by_transport", (q) =>
       q.eq("agentId", args.agentId).eq("channel", args.channel).eq("conversationId", args.conversationId).eq("senderId", args.senderId).eq("lineId", args.lineId),
     ).take(2);
@@ -34,14 +35,14 @@ export const claim = internalMutation({
       const receipt = receipts[0];
       if (receipt.bindingId !== binding._id) return { status: "rejected" };
       const message = await ctx.db.get(receipt.messageId);
-      if (!message || message.playerId !== binding.playerId || message.groupId !== binding.groupId || message.lineId !== binding.lineId || message.body !== args.body || message.source !== "keiki" || message.agentKey !== "common") return { status: "rejected" };
+      if (!message || message.playerId !== binding.playerId || message.groupId !== binding.groupId || message.lineId !== binding.lineId || message.body !== args.body || message.source !== "keiki" || message.agentKey !== agentKey) return { status: "rejected" };
       if (receipt.status === "completed") {
         return receipt.directiveJson ? { status: "completed", directiveJson: receipt.directiveJson } : { status: "uncertain" };
       }
       return { status: receipt.status };
     }
     const messageId = await ctx.db.insert("messages", {
-      groupId: binding.groupId, playerId: binding.playerId, kind: "chat", source: "keiki", body: args.body, lineId: args.lineId, agentKey: "common",
+      groupId: binding.groupId, playerId: binding.playerId, kind: "chat", source: "keiki", body: args.body, lineId: args.lineId, agentKey,
     });
     const receiptId = await ctx.db.insert("keikiReceipts", { eventKey: args.eventKey, status: "pending", messageId, bindingId: binding._id });
     return { status: "claimed", receiptId, messageId, groupId: binding.groupId, playerId: binding.playerId };
@@ -55,7 +56,7 @@ export const complete = internalMutation({
     const receipt = await ctx.db.get(receiptId);
     if (!receipt || receipt.status !== "pending") throw new Error("Receipt is not pending");
     const [binding, message] = await Promise.all([ctx.db.get(receipt.bindingId), ctx.db.get(receipt.messageId)]);
-    if (!binding?.active || !message || message.playerId !== binding.playerId || message.groupId !== binding.groupId || message.lineId !== binding.lineId || message.source !== "keiki" || message.agentKey !== "common") throw new Error("Invalid binding");
+    if (!binding?.active || !message || message.playerId !== binding.playerId || message.groupId !== binding.groupId || message.lineId !== binding.lineId || message.source !== "keiki" || message.agentKey !== (binding.lineId === "1" ? "common" : undefined)) throw new Error("Invalid binding");
     const bindings = await ctx.db.query("keikiBindings").withIndex("by_transport", (q) =>
       q.eq("agentId", binding.agentId).eq("channel", binding.channel).eq("conversationId", binding.conversationId).eq("senderId", binding.senderId).eq("lineId", binding.lineId),
     ).take(2);
@@ -69,7 +70,7 @@ export const complete = internalMutation({
       playerId: binding.playerId,
       messageId: receipt.messageId,
       lineId: binding.lineId,
-      agentKey: "common",
+      agentKey: binding.lineId === "1" ? "common" : (JSON.parse(directiveJson) as { character: { agentKey: string } }).character.agentKey,
       directiveJson,
     });
     if (!authorized) throw new Error("Directive authorization denied");

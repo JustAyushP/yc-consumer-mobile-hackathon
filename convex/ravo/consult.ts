@@ -31,7 +31,11 @@ export const authorizeCachedDirective = internalQuery({
   returns: v.object({ authorized: v.boolean() }),
   handler: async (ctx, args) => {
     try {
-      if (args.lineId !== "1" || args.agentKey !== "common") return { authorized: false };
+      if (args.lineId === "1" ? args.agentKey !== "common" : !["2", "3"].includes(args.lineId)) return { authorized: false };
+      if (args.lineId !== "1") {
+        const cast = await ctx.db.query("casts").withIndex("by_player_line", (q) => q.eq("playerId", args.playerId).eq("lineId", args.lineId)).unique();
+        if (!cast || cast.groupId !== args.groupId || cast.agentKey !== args.agentKey) return { authorized: false };
+      }
       const event = await ctx.db.query("storyEvents").withIndex("by_message", (q) => q.eq("messageId", args.messageId)).unique();
       if (!event || event.groupId !== args.groupId || event.playerId !== args.playerId || event.lineId !== args.lineId ||
         canonicalJson(JSON.parse(event.directiveJson)) !== canonicalJson(JSON.parse(args.directiveJson))) return { authorized: false };

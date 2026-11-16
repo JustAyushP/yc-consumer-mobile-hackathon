@@ -28,10 +28,11 @@ export type Dependencies = {
     playerId: Id<"players">;
     messageId: Id<"messages">;
     lineId: string;
-    agentKey: string;
+    agentKey?: string;
   }) => Promise<RavoDirective>;
   complete: (receiptId: Id<"keikiReceipts">, directiveJson: string) => Promise<unknown>;
   uncertain: (receiptId: Id<"keikiReceipts">) => Promise<unknown>;
+  memory?: (args: { playerId: Id<"players">; messageId: Id<"messages"> }) => Promise<string>;
 };
 
 export type DemoConfig = {
@@ -39,6 +40,7 @@ export type DemoConfig = {
   agentId?: string;
   lineId?: string;
   telegramBotId?: string;
+  lines?: Record<string, { agentId?: string; telegramBotId?: string }>;
 };
 
 function json(value: unknown, status: number) {
@@ -65,13 +67,17 @@ function nonempty(value: unknown): value is string {
 }
 
 export async function handleConsult(request: Request, config: DemoConfig, deps: Dependencies): Promise<Response> {
-  if (config.enabled !== "true" || !nonempty(config.agentId) || config.lineId !== "1" || !config.telegramBotId || !/^\d{1,20}$/.test(config.telegramBotId)) {
+  const lines = Object.entries(config.lines ?? (config.lineId === "1" ? { "1": { agentId: config.agentId, telegramBotId: config.telegramBotId } } : {}))
+    .filter(([id, line]) => ["1", "2", "3"].includes(id) && nonempty(line.agentId) && !!line.telegramBotId && /^\d{1,20}$/.test(line.telegramBotId));
+  if (config.enabled !== "true" || !lines.length) {
     return json({ error: "Keiki demo ingress is disabled or unconfigured" }, 503);
   }
   if (request.headers.has("X-Orchid-Internal")) return json({ error: "Dashboard turns are not supported" }, 403);
   const url = new URL(request.url);
-  if (url.searchParams.getAll("lineId").length !== 1 || url.searchParams.get("lineId") !== config.lineId ||
-      url.searchParams.getAll("botId").length !== 1 || url.searchParams.get("botId") !== config.telegramBotId ||
+  const lineId = url.searchParams.get("lineId");
+  const line = lines.find(([id]) => id === lineId)?.[1];
+  if (url.searchParams.getAll("lineId").length !== 1 || !line || !lineId ||
+      url.searchParams.getAll("botId").length !== 1 || url.searchParams.get("botId") !== line.telegramBotId ||
       [...url.searchParams.keys()].some((key) => key !== "lineId" && key !== "botId")) {
     return json({ error: "Invalid route", reason: "invalid_route" }, 400);
   }
@@ -100,11 +106,11 @@ export async function handleConsult(request: Request, config: DemoConfig, deps: 
   if (typeof input.intent !== "string" || !["theory", "question", "answer", "chat", "join"].includes(input.intent)) return json({ error: "Invalid request", reason: "invalid_intent" }, 400);
   if (!nonempty(context.phone) || context.phone.length > 256) return json({ error: "Invalid request", reason: "invalid_phone" }, 400);
   const transport: Transport = {
-    agentId: config.agentId,
+    agentId: line.agentId!,
     channel: "telegram",
-    conversationId: JSON.stringify(["telegram", config.telegramBotId, context.phone]),
+    conversationId: JSON.stringify(["telegram", line.telegramBotId, context.phone]),
     senderId: context.phone,
-    lineId: config.lineId,
+    lineId,
   };
   const eventKey = JSON.stringify(["keiki-demo-trace", transport.agentId, transport.channel, transport.conversationId, transport.senderId, transport.lineId, traceId]);
   let claim: Claim;
@@ -119,10 +125,11 @@ export async function handleConsult(request: Request, config: DemoConfig, deps: 
   }
   if (claim.status !== "claimed") return json({ error: "Demo trace already claimed; no automatic retry" }, 409);
   try {
-    const directive = await deps.consult({ groupId: claim.groupId, playerId: claim.playerId, messageId: claim.messageId, lineId: transport.lineId, agentKey: "common" });
+    const directive = await deps.consult({ groupId: claim.groupId, playerId: claim.playerId, messageId: claim.messageId, lineId: transport.lineId, agentKey: transport.lineId === "1" ? "common" : undefined });
     const directiveJson = JSON.stringify(directive);
     await deps.complete(claim.receiptId, directiveJson);
-    return json(directive, 200);
+    const memory = deps.memory ? await deps.memory({ playerId: claim.playerId, messageId: claim.messageId }).catch(() => "") : "";
+    return json(memory ? { ...directive, guidance: `${directive.guidance}\n${memory}` } : directive, 200);
   } catch {
     try {
       await deps.uncertain(claim.receiptId);
