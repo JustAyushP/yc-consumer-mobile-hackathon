@@ -154,7 +154,14 @@ export async function processIntegratedTurn(ctx: MutationCtx, args: {
   if (plan && pacingRow) await ctx.db.patch(pacingRow._id, { stateJson: JSON.stringify(plan.nextState) });
   else if (plan) await ctx.db.insert("brainPacing", { groupId: group._id, stateJson: JSON.stringify(plan.nextState) });
   let questionKey: string | undefined;
-  if (plan?.plan?.intervention.kind === "question") {
+  const sfQuestion = content.characters.revision === SF_CONTENT_REVISION && lineId === "1" && player.roleKey && segment?.active
+    ? eligibleQuestions.slice().sort((a, b) => a.key.localeCompare(b.key))[0]
+    : undefined;
+  if (sfQuestion) {
+    questionKey = sfQuestion.key;
+    directive.nextQuestion = `${sfQuestion.key}: ${sfQuestion.prompt}`;
+  }
+  if (content.characters.revision !== SF_CONTENT_REVISION && plan?.plan?.intervention.kind === "question") {
     questionKey = plan.plan.intervention.questionKey;
     directive.nextQuestion = eligibleQuestions.find((item) => item.key === questionKey)?.prompt;
   } else if (plan?.plan?.intervention.kind === "nudge") {

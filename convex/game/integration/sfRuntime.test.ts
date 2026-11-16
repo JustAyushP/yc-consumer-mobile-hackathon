@@ -49,9 +49,13 @@ it("runs the isolated SF case through seven flexible segments with three private
     expect(result.kind).toBe("answer");
     return await t.action(internal.ravo.consult.consult, { groupId, playerId, messageId, lineId: "1", agentKey: "common", answerId: result.value as Id<"answers"> });
   };
-  const start = await talk(players[0]);
+  const startMessage = await message(players[0], "hello");
+  const start = await t.action(internal.ravo.consult.consult, { groupId, playerId: players[0], messageId: startMessage, lineId: "1", agentKey: "common" });
   expect(start.guidance).toContain("The drawer is open");
   expect(start.guidance).toContain(sfInvitation(1, "forensic", 0));
+  expect(start.nextQuestion).toBe("d1q1: What does the examination establish about Victor's nightcap?");
+  expect(JSON.stringify(start)).not.toContain("d1q2");
+  expect(JSON.stringify(start)).not.toContain("d2q1");
   expect(start.guidance).not.toContain("Ledger B");
   for (const suspectKey of ["s_margot", "s_leo"]) {
     const early = await message(players[0], "early accusation");
@@ -74,7 +78,10 @@ it("runs the isolated SF case through seven flexible segments with three private
   expect(forensic.kind).toBe("ability");
   expect((await t.query(api.game.viewer.board, { viewerToken: "sf-0" })).myFindings).toHaveLength(1);
   expect((await t.query(api.game.viewer.board, { viewerToken: "sf-1" })).myFindings).toEqual([]);
-  await answer(players[0], "d1q1", "I don't know");
+  const afterAnswer = await answer(players[0], "d1q1", "I don't know");
+  expect(afterAnswer.nextQuestion).toBe("d1q2: Does the lipstick glass place Vivian at the fatal serving?");
+  expect(afterAnswer.nextQuestion).not.toContain("d1q1");
+  expect(await t.query(internal.ravo.consult.authorizeCachedDirective, { groupId, playerId: players[0], messageId: startMessage, lineId: "1", agentKey: "common", directiveJson: JSON.stringify(start) })).toEqual({ authorized: false });
   await settleScheduled(t);
   const recoveryMessage = await message(players[0], "revisit evidence");
   await expect(t.mutation(recover, { groupId, playerId: players[0], messageId: recoveryMessage, insightKey: "i_mk", text: "Margot is the bookkeeper" })).rejects.toThrow("not authorized");
@@ -157,6 +164,31 @@ it("offers every role a distinct optional focus in each segment", () => {
     expect(sfInvitation(segment, "forensic", 1)).not.toEqual(invitations[0]);
   }
   expect(() => sfInvitation(8, "forensic", 0)).toThrow("Invalid SF segment");
+});
+
+it("withholds SF questions from roleless or private turns and outside their day and segment", async () => {
+  vi.useFakeTimers();
+  const t = convexTest(schema, import.meta.glob("/convex/**/*.{ts,js}")); active = t;
+  const caseId = await t.mutation(install, {});
+  const { groupId, player, roleless } = await t.run(async (ctx) => {
+    const groupId = await ctx.db.insert("groups", { name: "Team", joinCode: "SF005", caseId, status: "lobby", day: 0, progress: 0, wrongAccusations: 0 });
+    const player = await ctx.db.insert("players", { groupId, name: "One", roleKey: "forensic", joinedDay: 0, lateJoiner: false });
+    await ctx.db.insert("players", { groupId, name: "Two", roleKey: "interrogator", joinedDay: 0, lateJoiner: false });
+    await ctx.db.insert("players", { groupId, name: "Three", roleKey: "profiler", joinedDay: 0, lateJoiner: false });
+    const roleless = await ctx.db.insert("players", { groupId, name: "Four", joinedDay: 0, lateJoiner: false });
+    return { groupId, player, roleless };
+  });
+  await t.mutation(internal.game.groups.start, { playerId: player });
+  const consult = async (playerId: Id<"players">, lineId: "1" | "2") => {
+    const messageId = await t.run(async (ctx) => ctx.db.insert("messages", { groupId, playerId, kind: "chat", source: "keiki", lineId, body: "hello" }));
+    return await t.action(internal.ravo.consult.consult, { groupId, playerId, messageId, lineId });
+  };
+  expect((await consult(roleless, "1")).nextQuestion).toBeUndefined();
+  expect((await consult(player, "2")).nextQuestion).toBeUndefined();
+  expect((await consult(player, "1")).nextQuestion).toContain("d1q1:");
+  await t.mutation(internal.game.engine.fastForwardDay, { groupId });
+  await t.mutation(internal.game.engine.fastForwardDay, { groupId });
+  expect((await consult(player, "1")).nextQuestion).toBeUndefined();
 });
 
 it("reuses a recovery admission below the optional daily limit", async () => {
