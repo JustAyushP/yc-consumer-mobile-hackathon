@@ -85,13 +85,10 @@ export async function handleConsult(request: Request, config: DemoConfig, deps: 
   const key = request.headers.get("X-Orchid-Api-Key");
   if (!key || !(await constantTimeEqual(key, config.apiKey))) {
     const present = Object.fromEntries(
-      ["x-orchid-api-key", "x-orchid-trace-id", "x-orchid-internal", "authorization", "x-orchid-signature", "x-orchid-timestamp", "x-keiki-signature", "x-signature", "x-hub-signature-256", "content-type"]
+      ["x-orchid-api-key", "x-orchid-trace-id", "x-orchid-internal", "authorization", "x-orchid-signature", "x-orchid-timestamp", "x-keiki-signature", "x-keiki-timestamp", "x-signature", "x-hub-signature-256", "content-type"]
         .map((name) => [name, request.headers.has(name)]),
     );
-    console.log("keiki-consult-auth-rejected", JSON.stringify({
-      present,
-      keyLengthMatches: key !== null && key.length === config.apiKey.length,
-    }));
+    console.log("keiki-consult-auth-rejected", JSON.stringify({ present }));
     return json({ error: "Unauthorized" }, 401);
   }
   if (request.headers.has("X-Orchid-Internal")) return json({ error: "Dashboard turns are not supported" }, 403);
