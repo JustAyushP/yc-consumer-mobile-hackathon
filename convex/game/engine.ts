@@ -5,6 +5,7 @@ import { internalMutation, MutationCtx } from "../_generated/server";
 import { groupPlayers, hintsLeft, weekOf } from "./lib";
 import { vMessageKind } from "../schema";
 import { consumeDailyTurn } from "./integration/daily";
+import { segmentAccess } from "./integration/access";
 export { processConsult, processAnswer, applyDecision } from "./runtime";
 
 // Engine mutations: the only way game state changes. RAVO calls these, never the tables directly.
@@ -44,7 +45,7 @@ export async function unlockClueImpl(ctx: MutationCtx, group: Doc<"groups">, clu
     if (!progress.some((p) => p.insightKey === insightKey)) return false;
   }
   await ctx.db.insert("clueUnlocks", { groupId: group._id, clueKey, day: group.day });
-  await say(ctx, group._id, "clue", `${clue.name}: ${clue.summary}`);
+  await ctx.db.insert("narration", { groupId: group._id, kind: "clue", body: `${clue.name}: ${clue.summary}`, clueKey: clue.key });
   return true;
 }
 
@@ -96,6 +97,11 @@ export const giveHint = internalMutation({
     let group = await ctx.db.get(groupId);
     if (!group || group.status !== "active" || (await ctx.db.get(playerId))?.groupId !== groupId) return false;
     group = await currentGroup(ctx, group);
+    const segment = await segmentAccess(ctx, group);
+    if (segment) {
+      const questions = await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", group!.caseId)).collect();
+      if (!questions.some((question) => segment.questionKeys.includes(question.key) && question.insightKeys.includes(insightKey))) return false;
+    }
     if ((await hintsLeft(ctx, group)) <= 0) return false;
     await consumeDailyTurn(ctx, group, playerId);
     await ctx.db.insert("hints", { groupId, playerId, week: weekOf(group.day), day: group.day, insightKey, body });

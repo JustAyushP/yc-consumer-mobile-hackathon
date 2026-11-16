@@ -1,12 +1,15 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
+import type { Infer } from "convex/values";
 import { afterEach, expect, it, vi } from "vitest";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import schema from "../../schema";
 import { settleScheduled } from "../testScheduler.support";
 import { SURVEY } from "../catalog";
+import { graph as graphValidator } from "../story/model";
+import { segmentDefinition } from "./segmentModel";
 
 vi.mock("../commands/reviewedHints", async (original) => {
   const actual = await original<typeof import("../commands/reviewedHints")>();
@@ -21,7 +24,9 @@ const content = {
     facts: [{ key: "public", text: "Reviewed public fact", audience: "group", requirements: ready }, { key: "private", text: "Forensic private fact", audience: "player", requirements: ready }] },
   roleFacts: { forensic: ["public", "private"], interrogator: ["public"], profiler: ["public"], archivist: ["public"] },
   pacing: { stallDays: 1, lagMissedSessions: 2, cooldownDays: 1, maxInterventionsPerProgress: 1 }, nudges: ["Review the evidence you already have."] };
-const graph = { caseKey: "fixture-integration", routes: [{ key: "secret_left", publicLabel: "Left route" }, { key: "secret_right", publicLabel: "Right route" }],
+type Graph = Infer<typeof graphValidator>;
+type Segment = Infer<typeof segmentDefinition>;
+const graph: Graph = { caseKey: "fixture-integration", routes: [{ key: "secret_left", publicLabel: "Left route" }, { key: "secret_right", publicLabel: "Right route" }],
   beats: [
     { key: "start", act: 1, requiredBeats: [], requiredInsights: [], requiredClues: [], requiredFlags: {}, effects: [] },
     { key: "left_ending", act: 2, requiredBeats: ["start"], requiredInsights: [], requiredClues: [], requiredFlags: { left: true }, effects: [] },
@@ -29,7 +34,8 @@ const graph = { caseKey: "fixture-integration", routes: [{ key: "secret_left", p
   ], decisions: [{ key: "secret_decision", publicLabel: "Where next?", requiredBeat: "start", durationMs: 86400000, tieOption: "l", defaultOption: "l",
     options: [{ key: "l", publicLabel: "Follow the left lead", effects: [{ kind: "flag" as const, key: "left", value: true }, { kind: "route" as const, key: "secret_left" }] },
       { key: "r", publicLabel: "Follow the right lead", effects: [{ kind: "flag" as const, key: "right", value: true }, { kind: "route" as const, key: "secret_right" }] }] }] };
-const installFixture = makeFunctionReference<"mutation", { groupId: Id<"groups">; graph: typeof graph; content: typeof content }, null>("game/integration/fixtures:installFixture");
+const installFixture = makeFunctionReference<"mutation", { groupId: Id<"groups">; graph: Graph; content: typeof content }, null>("game/integration/fixtures:installFixture");
+const installFixtureSegments = makeFunctionReference<"mutation", { groupId: Id<"groups">; definitions: Segment[] }, null>("game/integration/segments:installFixtureSegments");
 const claimAndDispatchFixture = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; lineId: "1" | "2" | "3"; body: string; command: unknown }, { messageId: Id<"messages">; result: unknown }>("game/integration/fixtureCaller:claimAndDispatchFixture");
 const claimAndVoteFixture = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; decisionId: Id<"storyDecisions">; optionIndex: number; expectedVersion: number }, { messageId: Id<"messages">; version: number }>("game/integration/fixtureCaller:claimAndVoteFixture");
 const recoverAnswer = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; answerId: Id<"answers">; lineId: string }, null>("game/integration/results:recoverAnswer");
@@ -40,7 +46,7 @@ const silentAccusation = makeFunctionReference<"mutation", { playerId: Id<"playe
 let test: ReturnType<typeof convexTest<typeof schema.tables>> | undefined;
 afterEach(async () => { if (test) await settleScheduled(test); test = undefined; vi.unstubAllEnvs(); vi.useRealTimers(); });
 
-async function setup() {
+async function setup(storyGraph: Graph = graph) {
   vi.stubEnv("RAVO_OFFLINE", "1");
   const t = convexTest(schema, import.meta.glob("/convex/**/*.{ts,js}")); test = t;
   const ids = await t.run(async (ctx) => {
@@ -56,7 +62,7 @@ async function setup() {
     await ctx.db.insert("questions", { caseId, day: 2, key: "q2", prompt: "Question two?", reference: "SECRET ANSWER", insightKeys: [] });
     return { caseId, groupId, player, teammate, outsider };
   });
-  await t.mutation(installFixture, { groupId: ids.groupId, graph, content });
+  await t.mutation(installFixture, { groupId: ids.groupId, graph: storyGraph, content });
   return { t, ...ids };
 }
 
@@ -270,4 +276,70 @@ it("detects a first observation after an idle day without counting a beat as pro
   await t.run(async (ctx) => ctx.db.patch(groupId, { day: 2, dayOpenedAt: Date.now() }));
   const result = await turn(t, groupId, player);
   expect(result.directive.nextQuestion).toBe("Question two?");
+});
+
+const segmentGraph: Graph = {
+  caseKey: "fixture-integration", routes: [], decisions: [],
+  beats: Array.from({ length: 7 }, (_, index) => ({ key: `beat${index + 1}`, act: index + 1,
+    requiredBeats: index ? [`beat${index}`] : [], requiredInsights: index === 1 ? ["proof"] : [], requiredClues: [], requiredFlags: {}, effects: [] })),
+};
+const segmentDefinitions: Segment[] = Array.from({ length: 7 }, (_, index) => ({
+  index: index + 1, opening: `Opening ${index + 1}`, high: `High ${index + 1}`,
+  ...(index < 6 ? { nextHook: `Next hook ${index + 1}` } : {}),
+  beatKeys: [`beat${index + 1}`], factKeys: index === 0 ? ["public"] : ["public", "private"], questionKeys: [], abilityTargets: [],
+  entry: { beats: index ? [`beat${index}`] : [], insights: [], clues: [], flags: {} },
+  exit: { beats: [`beat${index + 1}`], insights: [], clues: [], flags: {} },
+}));
+
+it("releases exactly seven eligible segments without waiting for an absent teammate or advancing the day", async () => {
+  const { t, groupId, player, teammate, outsider, caseId } = await setup(segmentGraph);
+  await t.mutation(installFixtureSegments, { groupId, definitions: segmentDefinitions });
+  await t.mutation(installFixtureSegments, { groupId, definitions: segmentDefinitions });
+  const first = await turn(t, groupId, player);
+  expect(first.directive.guidance).toContain("Opening 1");
+  expect(first.directive.guidance).not.toContain("Opening 2");
+  expect(first.directive.guidance).not.toContain("Forensic private fact");
+  const replay = { groupId, playerId: player, messageId: first.messageId, lineId: "1" };
+  const before = await t.run(async (ctx) => (await ctx.db.query("storyStates").first())!.version);
+  expect(await t.action(internal.ravo.consult.consult, replay)).toEqual(first.directive);
+  expect((await t.run(async (ctx) => (await ctx.db.query("storyStates").first())!.version))).toBe(before);
+  await expect(t.action(internal.ravo.consult.consult, { ...replay, playerId: outsider })).rejects.toThrow();
+  const closeFirst = await turn(t, groupId, player);
+  expect(closeFirst.directive.guidance).toContain("High 1");
+  expect(closeFirst.directive.guidance).toContain("Next hook 1");
+  const second = await turn(t, groupId, player);
+  expect(second.directive.guidance).toContain("Opening 2");
+  expect(second.directive.guidance).toContain("Forensic private fact");
+  const waiting = await turn(t, groupId, player);
+  expect(waiting.directive.guidance).not.toContain("High 2");
+  expect((await t.run(async (ctx) => ctx.db.query("brainSegments").first()))).toMatchObject({ index: 2, completed: false });
+  await t.mutation(internal.game.engine.recordInsight, { groupId, playerId: player, insightKey: "proof" });
+  await turn(t, groupId, player);
+  expect((await turn(t, groupId, player)).directive.guidance).toContain("High 2");
+  for (let index = 3; index <= 7; index++) {
+    const opened = await turn(t, groupId, player);
+    expect(opened.directive.guidance).toContain(`Opening ${index}`);
+    const closed = await turn(t, groupId, player);
+    expect(closed.directive.guidance).toContain(`High ${index}`);
+    if (index < 7) expect(closed.directive.guidance).toContain(`Next hook ${index}`);
+    else expect(closed.directive.guidance).not.toContain("Next hook");
+  }
+  const after = await turn(t, groupId, player);
+  expect(after.directive.guidance).not.toMatch(/Opening 8|High 8|Next hook/);
+  const persisted = await t.run(async (ctx) => ({ segment: await ctx.db.query("brainSegments").first(), group: await ctx.db.get(groupId), story: await ctx.db.query("storyStates").first(), caseRecord: await ctx.db.get(caseId) }));
+  expect(persisted.segment).toMatchObject({ index: 7, completed: true });
+  expect(persisted.group).toMatchObject({ day: 1, status: "active" });
+  expect(persisted.story?.doneBeats).toHaveLength(7);
+  expect(persisted.caseRecord?.culpritKey).toBe("b");
+  expect(await t.run(async (ctx) => (await ctx.db.query("storyEvents").collect()).some((event) => event.playerId === teammate))).toBe(false);
+});
+
+it("rejects incomplete, stalled and future-dependent segment definitions before play", async () => {
+  const { t, groupId } = await setup(segmentGraph);
+  await expect(t.mutation(installFixtureSegments, { groupId, definitions: segmentDefinitions.slice(0, 6) })).rejects.toThrow();
+  const repeated = segmentDefinitions.map((item, index) => index === 1 ? { ...item, exit: segmentDefinitions[0].exit } : item);
+  await expect(t.mutation(installFixtureSegments, { groupId, definitions: repeated })).rejects.toThrow("new progress");
+  const future = segmentDefinitions.map((item, index) => index === 0 ? { ...item, entry: { ...item.entry, beats: ["beat2"] } } : item);
+  await expect(t.mutation(installFixtureSegments, { groupId, definitions: future })).rejects.toThrow("segment gate");
+  expect(await t.run(async (ctx) => ctx.db.query("brainSegments").collect())).toEqual([]);
 });

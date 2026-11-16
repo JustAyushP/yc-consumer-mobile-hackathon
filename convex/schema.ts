@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { graph } from "./game/story/model";
+import { segmentDefinition } from "./game/integration/segmentModel";
 
 export const vRoleKey = v.union(v.literal("forensic"), v.literal("interrogator"), v.literal("profiler"), v.literal("archivist"));
 export const vGroupStatus = v.union(v.literal("lobby"), v.literal("active"), v.literal("solved"));
@@ -29,6 +30,7 @@ export default defineSchema({
     logline: v.string(),
     culpritKey: v.string(),
     reveal: v.array(v.string()),
+    contentRevision: v.optional(v.string()),
   }).index("by_key", ["key"]),
 
   suspects: defineTable({
@@ -234,6 +236,10 @@ export default defineSchema({
 
   brainPacing: defineTable({ groupId: v.id("groups"), stateJson: v.string() }).index("by_group", ["groupId"]),
 
+  brainSegments: defineTable({
+    groupId: v.id("groups"), caseId: v.id("cases"), definitions: v.array(segmentDefinition), index: v.number(), completed: v.boolean(),
+  }).index("by_group", ["groupId"]),
+
   brainDailyTurns: defineTable({ groupId: v.id("groups"), caseId: v.id("cases"), playerId: v.id("players"), day: v.number(), turns: v.number() })
     .index("by_player_day", ["playerId", "day"]),
 
@@ -276,7 +282,7 @@ export default defineSchema({
     dailyTurn: v.optional(v.number()),
     dailyTurnDay: v.optional(v.number()),
     dailyTurnLimit: v.optional(v.number()),
-  }).index("by_message", ["messageId"]).index("by_answer", ["answerId"]),
+  }).index("by_message", ["messageId"]).index("by_answer", ["answerId"]).index("by_group", ["groupId"]),
 
   viewerTokens: defineTable({
     token: v.string(),
@@ -310,6 +316,8 @@ export default defineSchema({
     playerId: v.optional(v.id("players")),
     kind: vMessageKind,
     body: v.string(),
+    clueKey: v.optional(v.string()),
+    segmentIndex: v.optional(v.number()),
   }).index("by_group", ["groupId"]),
 
   warnings: defineTable({

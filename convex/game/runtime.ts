@@ -12,6 +12,8 @@ import { matchInsights } from "../ravo/scoring";
 import { currentGroup, projectedDay, unlockClueImpl } from "./engine";
 import { authorizeIntegratedReplay, processIntegratedTurn } from "./integration/runtime";
 import { consumeDailyTurn, dailyStatus } from "./integration/daily";
+import { initializeSfGroup } from "./integration/sf";
+import { SF_CONTENT_REVISION } from "../cases/sfCandidate";
 
 const replayCommand = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; lineId: "1" | "2" | "3"; caseId: Id<"cases">; day: number; command: Doc<"commandReceipts">["command"] }, unknown>("game/commands/dispatch:dispatch");
 
@@ -161,7 +163,9 @@ export const processConsult = internalMutation({
     const admitted = previousAdmission ?? await consumeDailyTurn(ctx, group, playerId);
     const caseRecord = await ctx.db.get(group.caseId);
     if (!caseRecord) throw new Error("Invalid case");
-    const fixture = await ctx.db.query("brainFixtures").withIndex("by_group", (q) => q.eq("groupId", group!._id)).unique();
+    const fixture = caseRecord.contentRevision === SF_CONTENT_REVISION
+      ? await initializeSfGroup(ctx, group._id, group.caseId)
+      : await ctx.db.query("brainFixtures").withIndex("by_group", (q) => q.eq("groupId", group!._id)).unique();
     if (fixture) {
       const before = group.progress;
       if (args.answerId) await applyAnswer(ctx, group, playerId, args.answerId);

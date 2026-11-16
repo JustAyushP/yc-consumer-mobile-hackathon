@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internalMutation, query } from "../_generated/server";
 import { ROLES } from "./catalog";
 import { groupPlayers, hintsLeft, requireViewer } from "./lib";
+import { segmentAccess } from "./integration/access";
 
 // The read-only app's API. Every public function in the backend lives here, and each one is scoped by viewerToken.
 
@@ -62,12 +63,15 @@ export const board = query({
     const insights = await ctx.db.query("insights").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
     const found = await ctx.db.query("progress").withIndex("by_group", (q) => q.eq("groupId", group._id)).collect();
     const sessions = await ctx.db.query("sessions").withIndex("by_player_day", (q) => q.eq("playerId", player._id)).collect();
+    const segment = await segmentAccess(ctx, group);
+    const questions = segment ? await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", group.caseId)).collect() : [];
+    const visibleInsights = new Set(questions.filter((question) => segment?.questionKeys.includes(question.key)).flatMap((question) => question.insightKeys));
     return {
-      clues: unlocks.map((u) => {
+      clues: unlocks.filter((u) => !segment || segment.clueKeys.includes(u.clueKey)).map((u) => {
         const c = clues.find((x) => x.key === u.clueKey)!;
         return { key: c.key, name: c.name, kind: c.kind, summary: c.summary, day: u.day };
       }),
-      deductions: found.map((f) => ({ key: f.insightKey, label: insights.find((i) => i.key === f.insightKey)?.label ?? f.insightKey, day: f.day })),
+      deductions: found.filter((f) => !segment || visibleInsights.has(f.insightKey)).map((f) => ({ key: f.insightKey, label: insights.find((i) => i.key === f.insightKey)?.label ?? f.insightKey, day: f.day })),
       myFindings: sessions.filter((s) => s.abilityResult).map((s) => ({ day: s.day, target: s.abilityTarget!, result: s.abilityResult! })),
     };
   },
@@ -80,8 +84,11 @@ export const story = query({
     const { player, group } = await requireViewer(ctx, viewerToken);
     const rows = await ctx.db.query("messages").withIndex("by_group", (q) => q.eq("groupId", group._id)).order("desc").take(300);
     const narration = await ctx.db.query("narration").withIndex("by_group", (q) => q.eq("groupId", group._id)).order("desc").take(300);
-    return [...rows.filter((m) => (NARRATION as readonly string[]).includes(m.kind) && !m.agentKey && (m.kind === "intro" || !m.playerId || m.playerId === player._id)),
-      ...narration.filter((m) => !m.playerId || m.playerId === player._id)]
+    const segment = await segmentAccess(ctx, group);
+    return [...rows.filter((m) => (NARRATION as readonly string[]).includes(m.kind) && !m.agentKey && (m.kind === "intro" || !m.playerId || m.playerId === player._id) &&
+      (!segment || (m.kind !== "day" && m.kind !== "clue" && (m.kind !== "reveal" || group.status === "solved")))),
+      ...narration.filter((m) => (!m.playerId || m.playerId === player._id) && (!segment ||
+        (m.kind === "day" ? m.segmentIndex !== undefined && m.segmentIndex <= segment.index : m.kind === "clue" ? m.clueKey !== undefined && segment.clueKeys.includes(m.clueKey) : m.kind !== "reveal" || group.status === "solved")))]
       .map((m) => ({ _id: m._id, kind: m.kind, body: m.body, at: m._creationTime }))
       .sort((a, b) => a.at - b.at).slice(-300);
   },
@@ -141,9 +148,10 @@ export const timeline = query({
   handler: async (ctx, { viewerToken }) => {
     const { group } = await requireViewer(ctx, viewerToken);
     const days = await ctx.db.query("days").withIndex("by_case_day", (q) => q.eq("caseId", group.caseId)).collect();
+    const segment = await segmentAccess(ctx, group);
     return days.map((d) => ({
       day: d.day,
-      title: d.day <= group.day ? d.title : null,
+      title: !segment && d.day <= group.day ? d.title : null,
       state: d.day < group.day ? ("past" as const) : d.day === group.day ? ("today" as const) : ("ahead" as const),
     }));
   },

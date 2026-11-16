@@ -6,6 +6,7 @@ import { ROLES } from "./catalog";
 import { loadPlayer } from "./lib";
 import { currentGroup, projectedDay } from "./engine";
 import { consumeDailyTurn } from "./integration/daily";
+import { segmentAccess } from "./integration/access";
 
 async function ensureSession(ctx: MutationCtx, group: Doc<"groups">, player: Doc<"players">) {
   const s = await ctx.db.query("sessions").withIndex("by_player_day", (q) => q.eq("playerId", player._id).eq("day", group.day)).first();
@@ -22,13 +23,14 @@ export const today = internalQuery({
     const currentDay = projectedDay(group);
     const day = await ctx.db.query("days").withIndex("by_case_day", (q) => q.eq("caseId", group.caseId).eq("day", currentDay)).first();
     const questions = await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", group.caseId).eq("day", currentDay)).collect();
+    const segment = await segmentAccess(ctx, group);
     const answers = await ctx.db.query("answers").withIndex("by_player_day", (q) => q.eq("playerId", playerId).eq("day", currentDay)).collect();
     const session = await ctx.db.query("sessions").withIndex("by_player_day", (q) => q.eq("playerId", playerId).eq("day", currentDay)).first();
     return {
       day: currentDay,
-      title: day?.title ?? null,
-      briefing: day?.briefing ?? null,
-      questions: questions.map((q) => ({ key: q.key, prompt: q.prompt, answer: answers.find((a) => a.questionKey === q.key) ?? null })),
+      title: segment ? (segment.index ? `Segment ${segment.index}` : null) : day?.title ?? null,
+      briefing: segment ? segment.opening : day?.briefing ?? null,
+      questions: questions.filter((question) => !segment || segment.questionKeys.includes(question.key)).map((q) => ({ key: q.key, prompt: q.prompt, answer: answers.find((a) => a.questionKey === q.key) ?? null })),
       ability: player.roleKey ? ROLES[player.roleKey].ability : null,
       abilityUsed: session?.abilityResult ? { target: session.abilityTarget!, result: session.abilityResult } : null,
       completed: session?.completed ?? false,
@@ -45,6 +47,8 @@ export const submitAnswer = internalMutation({
     if (group.status !== "active") throw new Error("The case isn't open");
     const questions = await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", group.caseId).eq("day", group.day)).collect();
     if (!questions.some((question) => question.key === questionKey)) throw new Error("That question is not open today");
+    const segment = await segmentAccess(ctx, group);
+    if (segment && !segment.questionKeys.includes(questionKey)) throw new Error("Question not available in this segment");
     const priorAnswers = await ctx.db.query("answers").withIndex("by_player_day", (q) => q.eq("playerId", playerId).eq("day", group.day)).collect();
     const prior = priorAnswers.find(
       (a) => a.questionKey === questionKey,
@@ -70,6 +74,8 @@ export const useAbility = internalMutation({
     const { player, group: loadedGroup } = await loadPlayer(ctx, playerId);
     const group = await currentGroup(ctx, loadedGroup);
     if (group.status !== "active" || !player.roleKey) throw new Error("Not now, detective");
+    const segment = await segmentAccess(ctx, group);
+    if (segment && !segment.abilityTargets.includes(targetKey)) throw new Error("Ability target not available in this segment");
     const session = await ensureSession(ctx, group, player);
     if (session.abilityResult) throw new Error("Ability already used today");
     let result: string | undefined;

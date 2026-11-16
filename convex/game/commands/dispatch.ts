@@ -9,6 +9,10 @@ import { projectedDay } from "../engine";
 import { weekOf } from "../lib";
 import { reviewedHintsForCase, selectReviewedHint } from "./reviewedHints";
 import { dailyStatus } from "../integration/daily";
+import { verifiedSfGroup } from "../integration/sf";
+import { SF_CONTENT_REVISION } from "../../cases/sfCandidate";
+import { SF_REVIEWED_HINTS } from "../../cases/sfContent";
+import { segmentAccess } from "../integration/access";
 
 const command = v.union(
   v.object({ kind: v.literal("survey"), answers: v.array(v.object({ questionKey: v.string(), optionIndex: v.number() })) }),
@@ -86,6 +90,8 @@ export const dispatch = internalMutation({
       if (receipt.command.kind === "survey" && !player.roleKey) throw new Error("Stale command result");
       if (receipt.command.kind === "ability" && receipt.result.kind === "ability") {
         const targetKey = receipt.command.targetKey;
+        const segment = await segmentAccess(ctx, group);
+        if (segment && !segment.abilityTargets.includes(targetKey)) throw new Error("Stale command result");
         const expected = receipt.result.value;
         const session = await ctx.db.query("sessions").withIndex("by_player_day", (q) => q.eq("playerId", player._id).eq("day", args.day)).first();
         if (!player.roleKey || !session || session.groupId !== group._id || session.abilityTarget !== targetKey || session.abilityResult !== expected) throw new Error("Stale command result");
@@ -103,7 +109,14 @@ export const dispatch = internalMutation({
       if (receipt.command.kind === "hint" && receipt.result.kind === "hint") {
         const insights = await ctx.db.query("insights").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
         const progress = await ctx.db.query("progress").withIndex("by_group", (q) => q.eq("groupId", group._id)).collect();
-        const reviewed = selectReviewedHint(kase.key, receipt.command.insightKey, insights.map((item) => item.key), progress.map((item) => item.insightKey), reviewedHintsForCase(kase.key));
+        const segment = await segmentAccess(ctx, group);
+        if (segment) {
+          const insightKey = receipt.command.insightKey;
+          const questions = await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", group.caseId)).collect();
+          if (!questions.some((question) => segment.questionKeys.includes(question.key) && question.insightKeys.includes(insightKey))) throw new Error("Stale command result");
+        }
+        if (kase.contentRevision === SF_CONTENT_REVISION && !await verifiedSfGroup(ctx, group._id, group.caseId)) throw new Error("SF story revision changed");
+        const reviewed = selectReviewedHint(kase.key, receipt.command.insightKey, insights.map((item) => item.key), progress.map((item) => item.insightKey), kase.contentRevision === SF_CONTENT_REVISION ? SF_REVIEWED_HINTS : reviewedHintsForCase(kase.key));
         const hints = await ctx.db.query("hints").withIndex("by_group_week", (q) => q.eq("groupId", group._id).eq("week", weekOf(args.day))).collect();
         if (!reviewed || (receipt.result.value && !hints.some((hint) => hint.playerId === player._id && hint.day === args.day && hint.insightKey === reviewed.insightKey && hint.body === reviewed.body))) throw new Error("Stale command result");
       }
@@ -142,7 +155,8 @@ export const dispatch = internalMutation({
       case "hint": {
         const insights = await ctx.db.query("insights").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
         const progress = await ctx.db.query("progress").withIndex("by_group", (q) => q.eq("groupId", group._id)).collect();
-        const reviewed = selectReviewedHint(kase.key, args.command.insightKey, insights.map((item) => item.key), progress.map((item) => item.insightKey), reviewedHintsForCase(kase.key));
+        if (kase.contentRevision === SF_CONTENT_REVISION && !await verifiedSfGroup(ctx, group._id, group.caseId)) throw new Error("SF story revision changed");
+        const reviewed = selectReviewedHint(kase.key, args.command.insightKey, insights.map((item) => item.key), progress.map((item) => item.insightKey), kase.contentRevision === SF_CONTENT_REVISION ? SF_REVIEWED_HINTS : reviewedHintsForCase(kase.key));
         if (!reviewed) throw new Error("No eligible reviewed hint");
         value = { kind: "hint", value: await ctx.runMutation(internal.game.engine.giveHint, { groupId: group._id, playerId: player._id, insightKey: reviewed.insightKey, body: reviewed.body }) };
         break;
