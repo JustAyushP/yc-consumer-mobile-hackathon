@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { graph } from "./game/story/model";
+import { segmentDefinition } from "./game/integration/segmentModel";
 
 export const vRoleKey = v.union(v.literal("forensic"), v.literal("interrogator"), v.literal("profiler"), v.literal("archivist"));
 export const vGroupStatus = v.union(v.literal("lobby"), v.literal("active"), v.literal("solved"));
@@ -29,6 +30,7 @@ export default defineSchema({
     logline: v.string(),
     culpritKey: v.string(),
     reveal: v.array(v.string()),
+    contentRevision: v.optional(v.string()),
   }).index("by_key", ["key"]),
 
   suspects: defineTable({
@@ -75,6 +77,7 @@ export default defineSchema({
     prompt: v.string(),
     reference: v.string(),
     insightKeys: v.array(v.string()),
+    requiredForSession: v.optional(v.boolean()),
   }).index("by_case_day", ["caseId", "day"]),
 
   roles: defineTable({
@@ -102,6 +105,7 @@ export default defineSchema({
     solvedBy: v.optional(v.id("players")),
     solvedDay: v.optional(v.number()),
     ravoThreadId: v.optional(v.string()),
+    dailyTurnLimit: v.optional(v.number()),
   }).index("by_joinCode", ["joinCode"]).index("by_status", ["status"]),
 
   players: defineTable({
@@ -143,6 +147,9 @@ export default defineSchema({
     text: v.string(),
     score: v.optional(v.number()),
     verdict: v.optional(v.string()),
+    dailyTurnCharged: v.optional(v.boolean()),
+    dailyTurn: v.optional(v.number()),
+    dailyTurnLimit: v.optional(v.number()),
   })
     .index("by_player_day", ["playerId", "day"])
     .index("by_group", ["groupId"]),
@@ -218,9 +225,34 @@ export default defineSchema({
     groupId: v.id("groups"), eventKey: v.string(), operation: v.string(), payload: v.string(), version: v.number(),
   }).index("by_group_event", ["groupId", "eventKey"]),
 
+  brainFixtures: defineTable({
+    groupId: v.id("groups"), caseId: v.id("cases"), contentJson: v.string(),
+  }).index("by_group", ["groupId"]),
+
+  brainRecipients: defineTable({
+    groupId: v.id("groups"), playerId: v.id("players"), lineId: v.string(), agentKey: v.string(),
+    contentRevision: v.string(), authorizedFacts: v.array(v.string()), pendingAgentKey: v.optional(v.string()),
+  }).index("by_player_line", ["playerId", "lineId"]),
+
+  brainPacing: defineTable({ groupId: v.id("groups"), stateJson: v.string() }).index("by_group", ["groupId"]),
+
+  brainSegments: defineTable({
+    groupId: v.id("groups"), caseId: v.id("cases"), definitions: v.array(segmentDefinition), index: v.number(), completed: v.boolean(),
+  }).index("by_group", ["groupId"]),
+
+  brainDailyTurns: defineTable({ groupId: v.id("groups"), caseId: v.id("cases"), playerId: v.id("players"), day: v.number(), turns: v.number() })
+    .index("by_player_day", ["playerId", "day"]),
+
+  brainRecoveryReceipts: defineTable({
+    messageId: v.id("messages"), groupId: v.id("groups"), caseId: v.id("cases"), playerId: v.id("players"),
+    day: v.number(), insightKey: v.string(), text: v.string(), messageBody: v.string(), credited: v.boolean(),
+    dailyTurn: v.optional(v.number()), dailyTurnLimit: v.optional(v.number()),
+  }).index("by_message", ["messageId"]),
+
   commandReceipts: defineTable({
     messageId: v.id("messages"), groupId: v.id("groups"), caseId: v.id("cases"), playerId: v.id("players"),
     lineId: v.union(v.literal("1"), v.literal("2"), v.literal("3")), day: v.number(),
+    dailyTurn: v.optional(v.number()), dailyTurnLimit: v.optional(v.number()),
     command: v.union(
       v.object({ kind: v.literal("survey"), answers: v.array(v.object({ questionKey: v.string(), optionIndex: v.number() })) }),
       v.object({ kind: v.literal("answer"), questionKey: v.string(), text: v.string() }),
@@ -251,7 +283,12 @@ export default defineSchema({
     clueKeys: v.array(v.string()),
     insightKeys: v.array(v.string()),
     directiveJson: v.string(),
-  }).index("by_message", ["messageId"]).index("by_answer", ["answerId"]),
+    integrationJson: v.optional(v.string()),
+    dailyClosureDay: v.optional(v.number()),
+    dailyTurn: v.optional(v.number()),
+    dailyTurnDay: v.optional(v.number()),
+    dailyTurnLimit: v.optional(v.number()),
+  }).index("by_message", ["messageId"]).index("by_answer", ["answerId"]).index("by_group", ["groupId"]),
 
   viewerTokens: defineTable({
     token: v.string(),
@@ -285,6 +322,8 @@ export default defineSchema({
     playerId: v.optional(v.id("players")),
     kind: vMessageKind,
     body: v.string(),
+    clueKey: v.optional(v.string()),
+    segmentIndex: v.optional(v.number()),
   }).index("by_group", ["groupId"]),
 
   warnings: defineTable({

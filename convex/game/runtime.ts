@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { makeFunctionReference } from "convex/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, MutationCtx, QueryCtx } from "../_generated/server";
 import { assignImpl, COMMON_CHARACTER } from "../ravo/casts";
@@ -9,6 +10,21 @@ import { reviewedContentForCase } from "../ravo/director/content";
 import { planStoryTransition, selectEligibleBeat } from "../ravo/director/story";
 import { matchInsights } from "../ravo/scoring";
 import { currentGroup, projectedDay, unlockClueImpl } from "./engine";
+import { authorizeIntegratedReplay, processIntegratedTurn } from "./integration/runtime";
+import { consumeDailyTurn, dailyStatus } from "./integration/daily";
+import { initializeSfGroup, isSfBound, verifiedSfGroup } from "./integration/sf";
+import { sfInsightEligible } from "./integration/sfEvidence";
+import { SF_CONTENT_REVISION } from "../cases/sfCandidate";
+
+const replayCommand = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; lineId: "1" | "2" | "3"; caseId: Id<"cases">; day: number; command: Doc<"commandReceipts">["command"] }, unknown>("game/commands/dispatch:dispatch");
+const replayRecovery = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; insightKey: string; text: string }, { credited: boolean }>("game/integration/recoverDeduction:recoverDeduction");
+
+async function closureBinding(ctx: QueryCtx, message: Doc<"messages">, playerId: Id<"players">, lineId: string, expectedAgentKey?: string) {
+  const cast = lineId === "1" ? null : await ctx.db.query("casts").withIndex("by_player_line", (q) => q.eq("playerId", playerId).eq("lineId", lineId)).unique();
+  const agentKey = lineId === "1" ? COMMON_CHARACTER.agentKey : cast?.groupId === message.groupId ? cast.agentKey : undefined;
+  if (!agentKey || (expectedAgentKey !== undefined && expectedAgentKey !== agentKey) || (message.agentKey !== undefined && message.agentKey !== agentKey)) return null;
+  return JSON.stringify({ body: message.body, agentKey: message.agentKey ?? null, castAgentKey: agentKey, intakeCaseId: message.intakeCaseId ?? null, intakeDay: message.intakeDay ?? null });
+}
 
 export async function authorizedReplay(ctx: QueryCtx, event: Doc<"storyEvents">) {
   const group = await ctx.db.get(event.groupId);
@@ -18,7 +34,12 @@ export async function authorizedReplay(ctx: QueryCtx, event: Doc<"storyEvents">)
     message.groupId !== event.groupId || message.playerId !== event.playerId || message.kind !== "chat" || message.source !== "keiki" ||
     message.lineId !== event.lineId || message.answerId !== event.answerId) return null;
   const directive = JSON.parse(event.directiveJson);
+  const daily = await dailyStatus(ctx, group, event.playerId);
+  if (daily.limit !== undefined && projectedDay(group) !== group.day) return null;
+  if (event.dailyClosureDay !== undefined) return daily.closed && event.dailyClosureDay === group.day && directive.character.agentKey === "common" && event.sheetJson === await closureBinding(ctx, message, event.playerId, event.lineId) ? directive : null;
+  if (daily.closed && (daily.completed || event.dailyTurnDay !== group.day || event.dailyTurn === undefined || daily.limit === undefined || event.dailyTurn > daily.limit || event.dailyTurnLimit !== daily.limit)) return null;
   if (message.agentKey !== undefined && message.agentKey !== directive.character.agentKey) return null;
+  if (event.integrationJson !== undefined) return await authorizeIntegratedReplay(ctx, event) ? directive : null;
   if (event.lineId !== "1") {
     const cast = await ctx.db.query("casts").withIndex("by_player_line", (q) => q.eq("playerId", event.playerId).eq("lineId", event.lineId)).unique();
     if (!cast || cast.groupId !== event.groupId || cast.agentKey !== directive.character.agentKey) return null;
@@ -59,7 +80,13 @@ async function applyAnswer(ctx: MutationCtx, group: Doc<"groups">, playerId: Id<
   const insights = await ctx.db.query("insights").withIndex("by_case", (q) => q.eq("caseId", group.caseId)).collect();
   const progress = await ctx.db.query("progress").withIndex("by_group", (q) => q.eq("groupId", group._id)).collect();
   const found = new Set(progress.map((p) => p.insightKey));
-  const hits = matchInsights(insights, answer.text).filter((key) => question.insightKeys.includes(key));
+  let hits = matchInsights(insights, answer.text).filter((key) => question.insightKeys.includes(key));
+  const caseRecord = await ctx.db.get(group.caseId);
+  if (caseRecord?.contentRevision === SF_CONTENT_REVISION || await isSfBound(ctx, group._id, group.caseId)) {
+    if (!await verifiedSfGroup(ctx, group._id, group.caseId)) throw new Error("SF story revision changed");
+    const authorized = await Promise.all(hits.map((key) => sfInsightEligible(ctx, group, key)));
+    hits = hits.filter((_, index) => authorized[index]);
+  }
   let credited = false;
   for (const key of hits) {
     if (found.has(key)) continue;
@@ -118,13 +145,47 @@ export const processConsult = internalMutation({
     if (prior) {
       if (prior.groupId !== args.groupId || prior.playerId !== playerId || prior.lineId !== args.lineId || prior.answerId !== args.answerId) throw new Error("Invalid conversation");
       const directive = await authorizedReplay(ctx, prior);
-      if (!directive || (args.agentKey !== undefined && args.agentKey !== directive.character.agentKey)) throw new Error("Conversation authorization changed");
+      if (!directive || (prior.dailyClosureDay === undefined && args.agentKey !== undefined && args.agentKey !== directive.character.agentKey)) throw new Error("Conversation authorization changed");
       return directive;
     }
     if (args.answerId && await ctx.db.query("storyEvents").withIndex("by_answer", (q) => q.eq("answerId", args.answerId)).first()) throw new Error("Answer already processed");
     group = await currentGroup(ctx, group);
+    const daily = await dailyStatus(ctx, group, playerId);
+    const receipt = await ctx.db.query("commandReceipts").withIndex("by_message", (q) => q.eq("messageId", args.messageId)).unique();
+    const recovery = await ctx.db.query("brainRecoveryReceipts").withIndex("by_message", (q) => q.eq("messageId", args.messageId)).unique();
+    const countedCommand = receipt && receipt.groupId === group._id && receipt.playerId === playerId && receipt.caseId === group.caseId && receipt.day === group.day && receipt.lineId === args.lineId && receipt.dailyTurn !== undefined && receipt.dailyTurnLimit !== undefined &&
+      (receipt.result.kind === "answer" || receipt.result.kind === "ability" || receipt.result.kind === "accusation" || (receipt.result.kind === "hint" && receipt.result.value));
+    const answer = args.answerId && await ctx.db.get(args.answerId);
+    const countedAnswer = answer && answer.groupId === group._id && answer.playerId === playerId && answer.day === group.day && answer.dailyTurnCharged && answer.dailyTurn !== undefined && answer.dailyTurnLimit !== undefined;
+    const countedRecovery = recovery && recovery.groupId === group._id && recovery.playerId === playerId && recovery.caseId === group.caseId && recovery.day === group.day && recovery.credited && recovery.messageBody === message.body && recovery.dailyTurn !== undefined && recovery.dailyTurnLimit !== undefined;
+    const previousAdmission = daily.limit === undefined ? undefined : countedCommand ? { turn: receipt.dailyTurn!, limit: receipt.dailyTurnLimit! } : countedAnswer ? { turn: answer.dailyTurn!, limit: answer.dailyTurnLimit! } : countedRecovery ? { turn: recovery.dailyTurn!, limit: recovery.dailyTurnLimit! } : undefined;
+    const finalAdmittedTurn = previousAdmission && !daily.completed && previousAdmission.turn === daily.limit && previousAdmission.turn === daily.counter?.turns && previousAdmission.limit === daily.limit;
+    if (daily.closed && !finalAdmittedTurn) {
+      const binding = await closureBinding(ctx, message, playerId, args.lineId, args.agentKey);
+      if (!binding) throw new Error("Invalid conversation");
+      const next = group.dayOpenedAt === undefined ? "the next game day" : new Date(group.dayOpenedAt + 86400000 - (group.gameTimeOffsetMs ?? 0)).toISOString();
+      const directive = { character: COMMON_CHARACTER, guidance: `Your session is complete. Return tomorrow. Next unlock: ${next}.`, tone: "noir", endTurn: true };
+      await ctx.db.insert("storyEvents", { groupId: group._id, caseId: group.caseId, playerId, messageId: args.messageId, lineId: args.lineId, answerId: args.answerId,
+        sheetJson: binding, contentJson: "{}", clueKeys: [], insightKeys: [], directiveJson: JSON.stringify(directive), dailyClosureDay: group.day });
+      return directive;
+    }
+    if (countedCommand) await ctx.runMutation(replayCommand, { groupId: group._id, playerId, messageId: args.messageId, lineId: receipt.lineId, caseId: group.caseId, day: group.day, command: receipt.command });
+    if (countedRecovery) await ctx.runMutation(replayRecovery, { groupId: group._id, playerId, messageId: args.messageId, insightKey: recovery.insightKey, text: recovery.text });
+    const admitted = previousAdmission ?? await consumeDailyTurn(ctx, group, playerId);
     const caseRecord = await ctx.db.get(group.caseId);
     if (!caseRecord) throw new Error("Invalid case");
+    const fixture = caseRecord.contentRevision === SF_CONTENT_REVISION
+      ? await initializeSfGroup(ctx, group._id, group.caseId)
+      : await ctx.db.query("brainFixtures").withIndex("by_group", (q) => q.eq("groupId", group!._id)).unique();
+    if (fixture) {
+      const before = group.progress;
+      if (args.answerId) await applyAnswer(ctx, group, playerId, args.answerId);
+      const latestGroup = (await ctx.db.get(group._id))!;
+      return await processIntegratedTurn(ctx, { group: latestGroup, player, messageId: args.messageId,
+        lineId: args.lineId as "1" | "2" | "3", agentKey: args.agentKey ?? message.agentKey,
+        answerId: args.answerId, progressDelta: latestGroup.progress - before, fixture, admitted });
+    }
+    const storyInstance = await ctx.db.query("storyInstances").withIndex("by_group", (q) => q.eq("groupId", group!._id)).unique();
     const content = reviewedContentForCase(caseRecord.key);
     const assigned = await assignImpl(ctx, playerId, args.lineId, args.agentKey ?? message.agentKey);
     const lineId = args.lineId;
@@ -155,7 +216,7 @@ export const processConsult = internalMutation({
     }
     const snapshot = { day: group.day, act: state.act, version: state.version, doneBeats: state.doneBeats,
       flags: state.flags, creditedInsights: [...found], unlockedClues: unlocks.map((u) => u.clueKey) };
-    const beat = selectEligibleBeat(snapshot, content.beats);
+    const beat = selectEligibleBeat(snapshot, storyInstance ? [] : content.beats);
     let act = state.act;
     let doneBeats = state.doneBeats;
     let flags = state.flags;
@@ -207,7 +268,7 @@ export const processConsult = internalMutation({
       const clue = clues.find((item) => item.key === key)!;
       return { key, id: clue._id, name: clue.name, summary: clue.summary };
     }), labels: insightKeys.map((key) => content.insightLabels[key]), questionPrompt: directive.nextQuestion ?? null });
-    await ctx.db.insert("storyEvents", { groupId: group._id, caseId: group.caseId, playerId, messageId: args.messageId, lineId, answerId: args.answerId, questionKey, questionDay: questionKey ? group.day : undefined, sheetJson: JSON.stringify(sheet ?? null), contentJson, clueKeys, insightKeys, directiveJson: JSON.stringify(directive) });
+    await ctx.db.insert("storyEvents", { groupId: group._id, caseId: group.caseId, playerId, messageId: args.messageId, lineId, answerId: args.answerId, questionKey, questionDay: questionKey ? group.day : undefined, sheetJson: JSON.stringify(sheet ?? null), contentJson, clueKeys, insightKeys, directiveJson: JSON.stringify(directive), dailyTurn: admitted?.turn, dailyTurnDay: admitted ? group.day : undefined, dailyTurnLimit: admitted?.limit });
     return directive;
   },
 });
