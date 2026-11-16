@@ -234,12 +234,35 @@ it("records command admission against the rolled-over game day", async () => {
 it("automatically closes only explicitly required authored tasks and preserves answer replay", async () => {
   const { t, groupId, player, caseId } = await setup();
   const question = await t.run(async (ctx) => (await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", caseId).eq("day", 1)).first())!);
-  await t.run(async (ctx) => ctx.db.patch(question._id, { requiredForSession: true }));
+  await t.run(async (ctx) => { await ctx.db.patch(groupId, { dailyTurnLimit: 12 }); await ctx.db.patch(question._id, { requiredForSession: true }); });
   const answerId = await t.mutation(internal.game.session.submitAnswer, { playerId: player, questionKey: "q1", text: "proof" });
   expect(await t.mutation(internal.game.session.submitAnswer, { playerId: player, questionKey: "q1", text: "proof" })).toBe(answerId);
   expect((await turn(t, groupId, player)).directive.guidance).toContain("Return tomorrow");
   await settleScheduled(t);
   expect((await t.run(async (ctx) => ctx.db.get(answerId)))?.score).toBe(1);
+});
+
+it.each([undefined, 0])("leaves unconfigured or disabled sessions unrestricted without charging turns (%s)", async (limit) => {
+  vi.useFakeTimers();
+  const { t, groupId, player, caseId } = await setup();
+  const question = await t.run(async (ctx) => (await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", caseId).eq("day", 1)).first())!);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(groupId, { dailyTurnLimit: limit });
+    await ctx.db.patch(player, { roleKey: "interrogator" });
+    await ctx.db.patch(question._id, { requiredForSession: true });
+  });
+  for (let i = 0; i < 14; i++) expect((await turn(t, groupId, player)).directive.endTurn).toBe(false);
+  const command = await t.mutation(claimAndDispatchFixture, { groupId, playerId: player, lineId: "1", body: "answer", command: { kind: "answer", questionKey: "q1", text: "proof" } });
+  const answerId = (command.result as { kind: "answer"; value: Id<"answers"> }).value;
+  const before = await t.run(async (ctx) => ({ answer: await ctx.db.get(answerId), session: await ctx.db.query("sessions").withIndex("by_player_day", (q) => q.eq("playerId", player).eq("day", 1)).unique(), receipt: await ctx.db.query("commandReceipts").withIndex("by_message", (q) => q.eq("messageId", command.messageId)).unique() }));
+  expect(before.session?.completed).toBe(false);
+  expect(before.answer?.dailyTurnCharged).toBeUndefined();
+  expect(before.receipt?.dailyTurn).toBeUndefined();
+  await t.mutation(internal.game.session.complete, { playerId: player });
+  expect((await turn(t, groupId, player)).directive.endTurn).toBe(false);
+  expect(await t.mutation(internal.game.session.useAbility, { playerId: player, targetKey: "a" })).toBe("SECRET INTERROGATION");
+  expect(await t.run(async (ctx) => ctx.db.query("brainDailyTurns").collect())).toEqual([]);
+  expect((await t.run(async (ctx) => ctx.db.query("storyEvents").collect())).every((event) => event.dailyTurn === undefined && event.dailyClosureDay === undefined)).toBe(true);
 });
 
 it("detects a first observation after an idle day without counting a beat as progress", async () => {

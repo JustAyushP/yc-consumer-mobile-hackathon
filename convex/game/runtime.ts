@@ -30,11 +30,10 @@ export async function authorizedReplay(ctx: QueryCtx, event: Doc<"storyEvents">)
     message.groupId !== event.groupId || message.playerId !== event.playerId || message.kind !== "chat" || message.source !== "keiki" ||
     message.lineId !== event.lineId || message.answerId !== event.answerId) return null;
   const directive = JSON.parse(event.directiveJson);
-  const today = projectedDay(group);
-  if (today !== group.day) return null;
   const daily = await dailyStatus(ctx, group, event.playerId);
+  if (daily.limit !== undefined && projectedDay(group) !== group.day) return null;
   if (event.dailyClosureDay !== undefined) return daily.closed && event.dailyClosureDay === group.day && directive.character.agentKey === "common" && event.sheetJson === await closureBinding(ctx, message, event.playerId, event.lineId) ? directive : null;
-  if (daily.closed && (daily.completed || event.dailyTurnDay !== group.day || event.dailyTurn === undefined || event.dailyTurn > daily.limit || event.dailyTurnLimit !== daily.limit)) return null;
+  if (daily.closed && (daily.completed || event.dailyTurnDay !== group.day || event.dailyTurn === undefined || daily.limit === undefined || event.dailyTurn > daily.limit || event.dailyTurnLimit !== daily.limit)) return null;
   if (message.agentKey !== undefined && message.agentKey !== directive.character.agentKey) return null;
   if (event.integrationJson !== undefined) return await authorizeIntegratedReplay(ctx, event) ? directive : null;
   if (event.lineId !== "1") {
@@ -147,7 +146,7 @@ export const processConsult = internalMutation({
       (receipt.result.kind === "answer" || receipt.result.kind === "ability" || receipt.result.kind === "accusation" || (receipt.result.kind === "hint" && receipt.result.value));
     const answer = args.answerId && await ctx.db.get(args.answerId);
     const countedAnswer = answer && answer.groupId === group._id && answer.playerId === playerId && answer.day === group.day && answer.dailyTurnCharged && answer.dailyTurn !== undefined && answer.dailyTurnLimit !== undefined;
-    const previousAdmission = countedCommand ? { turn: receipt.dailyTurn!, limit: receipt.dailyTurnLimit! } : countedAnswer ? { turn: answer.dailyTurn!, limit: answer.dailyTurnLimit! } : undefined;
+    const previousAdmission = daily.limit === undefined ? undefined : countedCommand ? { turn: receipt.dailyTurn!, limit: receipt.dailyTurnLimit! } : countedAnswer ? { turn: answer.dailyTurn!, limit: answer.dailyTurnLimit! } : undefined;
     const finalAdmittedTurn = previousAdmission && !daily.completed && previousAdmission.turn === daily.limit && previousAdmission.turn === daily.counter?.turns && previousAdmission.limit === daily.limit;
     if (daily.closed && !finalAdmittedTurn) {
       const binding = await closureBinding(ctx, message, playerId, args.lineId, args.agentKey);
