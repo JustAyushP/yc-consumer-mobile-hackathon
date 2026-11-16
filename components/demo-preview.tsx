@@ -19,6 +19,7 @@ export default function DemoPreview() {
   const closeDetail = () => router.setParams({ place: "", entry: "" });
   return <View style={styles.root}>
     <Page key={tab} label="DEMO PREVIEW · SAMPLE DATA">
+      <Pressable accessibilityRole="button" accessibilityLabel="Back to stories" onPress={() => router.push("/")} style={styles.storiesLink}><Text style={styles.storiesText}>‹  All stories</Text></Pressable>
       {tab === "world" ? <>
         <Heading>{"Last Call on\nMarket Street"}</Heading>
         <Text style={styles.subtitle}>{demoCase.setting}</Text>
@@ -71,7 +72,7 @@ export default function DemoPreview() {
           <Action title="Session history" subtitle="Day 1 · The room went dark · Complete" onPress={() => router.setParams({ entry: "history" })} />
         </View>
       </>}
-      <View style={styles.exit}><Text style={ui.small}>Fictional demo data. No live player statistics. All people and venues are fictional.</Text><Action title="Leave demo preview" onPress={() => router.replace("/")} /></View>
+      <View style={styles.exit}><Text style={ui.small}>Fictional demo data. No live player statistics. All people and venues are fictional.</Text><Action title="Back to stories" onPress={() => router.replace("/")} /></View>
     </Page>
     <View style={[styles.tabs, { paddingBottom: Math.max(insets.bottom, 15) }]} accessibilityRole="tablist">{tabs.map(value => <Pressable key={value} accessibilityRole="tab" accessibilityState={{ selected: tab === value }} accessibilityLabel={labels[value]} onPress={() => router.setParams({ screen: value, place: "", entry: "" })} style={styles.tab}><Icon name={value} color={tab === value ? colors.amber : colors.muted} /><Text style={[styles.tabText, tab === value && { color: colors.amber }]}>{labels[value]}</Text></Pressable>)}</View>
     <Modal visible={!!location || journal || (tab === "investigation" && entry === "story")} transparent onRequestClose={closeDetail}>
@@ -90,6 +91,8 @@ export default function DemoPreview() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
+  storiesLink: { minHeight: 44, justifyContent: "center" },
+  storiesText: { color: colors.amber, fontFamily: fonts.body, fontSize: 12 },
   subtitle: { fontFamily: fonts.body, fontSize: 12, lineHeight: 18, color: colors.muted },
   scene: { marginTop: 16, alignSelf: "center", aspectRatio: 1264 / 848, backgroundColor: "#000000" },
   image: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", resizeMode: "contain" },
