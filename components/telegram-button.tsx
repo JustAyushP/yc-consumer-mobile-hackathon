@@ -2,10 +2,28 @@ import * as Linking from "expo-linking";
 import { useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { useQuery } from "convex/react";
+
+import { api } from "@/convex/_generated/api";
+import { useBackendReady } from "./backend";
 import { openTelegram, TELEGRAM_BOTS } from "./telegram-link";
+import { useViewerToken } from "./viewer";
 import { colors, fonts } from "./ui/theme";
 
 export function TelegramButton({ demo = false }: { demo?: boolean }) {
+  const backendReady = useBackendReady();
+  const { token } = useViewerToken();
+  if (!demo && backendReady && token) return <LiveTelegramButtons token={token} />;
+  return <TelegramButtons demo={demo} />;
+}
+
+function LiveTelegramButtons({ token }: { token: string }) {
+  const info = useQuery(api.chat.harness.lines, { viewerToken: token });
+  const names = Object.fromEntries((info?.lines ?? []).map((line) => [line.lineId, line.name]));
+  return <TelegramButtons names={names} />;
+}
+
+function TelegramButtons({ demo = false, names = {} }: { demo?: boolean; names?: Record<string, string> }) {
   const opening = useRef(false);
   const [pending, setPending] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -22,8 +40,8 @@ export function TelegramButton({ demo = false }: { demo?: boolean }) {
   };
 
   return <View style={styles.container}>
-    {TELEGRAM_BOTS.map((bot) => <Pressable key={bot.lineId} accessibilityRole="button" accessibilityLabel={`${bot.label}, open Telegram`} accessibilityState={{ disabled: pending !== null }} disabled={pending !== null} onPress={() => open(bot)} style={({ pressed }) => [styles.button, pressed && { opacity: 0.7 }]}>
-      <Text style={styles.title}>{pending === bot.lineId ? "Opening Telegram…" : `${bot.label}  ·  Open Telegram`}</Text>
+    {TELEGRAM_BOTS.map((bot) => <Pressable key={bot.lineId} accessibilityRole="button" accessibilityLabel={`${(names[bot.lineId] ? `Chat with ${names[bot.lineId]}` : bot.label)}, open Telegram`} accessibilityState={{ disabled: pending !== null }} disabled={pending !== null} onPress={() => open(bot)} style={({ pressed }) => [styles.button, pressed && { opacity: 0.7 }]}>
+      <Text style={styles.title}>{pending === bot.lineId ? "Opening Telegram…" : `${(names[bot.lineId] ? `Chat with ${names[bot.lineId]}` : bot.label)}  ·  Open Telegram`}</Text>
     </Pressable>)}
     <Text style={styles.note}>{demo ? "Opens the Telegram demo bots. Sample case data isn’t synchronized." : "Opens the Telegram demo bots. All three characters share what you tell any of them. No viewer details are sent from this app."}</Text>
     {failed ? <Text accessibilityLiveRegion="polite" style={styles.note}>Couldn’t open Telegram. Try again or visit t.me/{failed}.</Text> : null}
