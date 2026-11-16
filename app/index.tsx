@@ -1,6 +1,5 @@
 import { Redirect, router, useLocalSearchParams } from "expo-router";
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
-import Svg, { Circle, Path } from "react-native-svg";
 
 import { Copy, Heading, Page, ui } from "@/components/companion";
 import { isViewerLink, storyDestination } from "@/components/story-navigation";
@@ -32,12 +31,12 @@ export default function Stories() {
     <View style={styles.section}>
       <Text accessibilityRole="header" style={styles.sectionTitle}>More stories</Text>
       <View style={styles.grid}>
-        <View accessibilityLabel="The Midnight Express, coming soon" style={styles.future}>
-          <View style={[styles.art, styles.train]}><Svg width="72" height="72" viewBox="0 0 72 72" fill="none" stroke={colors.amber} strokeWidth={1.3}><Path d="M18 55V22h36v33M24 49h24M24 30h24M30 22v-7h12v7M24 55l-5 7M48 55l5 7" /><Circle cx="28" cy="42" r="3" /><Circle cx="44" cy="42" r="3" /></Svg></View>
+        <View accessible accessibilityLabel="The Midnight Express, coming soon" style={styles.future}>
+          <View style={styles.art}><Image source={require("@/assets/images/midnight-express.jpg")} style={styles.cover} accessible={false} /></View>
           <Text style={styles.futureTitle}>The Midnight Express</Text><Text style={styles.coming}>COMING SOON</Text>
         </View>
-        <View accessibilityLabel="The Glass House, coming soon" style={styles.future}>
-          <View style={[styles.art, styles.house]}><Svg width="72" height="72" viewBox="0 0 72 72" fill="none" stroke={colors.amber} strokeWidth={1.3}><Path d="M12 36 36 16l24 20M19 33v25h34V33M29 58V43h14v15M36 16v42M19 40h34" /></Svg></View>
+        <View accessible accessibilityLabel="The Glass House, coming soon" style={styles.future}>
+          <View style={styles.art}><Image source={require("@/assets/images/glass-house.jpg")} style={styles.cover} accessible={false} /></View>
           <Text style={styles.futureTitle}>The Glass House</Text><Text style={styles.coming}>COMING SOON</Text>
         </View>
       </View>
@@ -60,9 +59,8 @@ const styles = StyleSheet.create({
   sectionTitle: { fontFamily: fonts.display, fontSize: 23, lineHeight: 28, color: colors.text },
   grid: { flexDirection: "row", gap: 12, marginTop: 14 },
   future: { flex: 1, minWidth: 0, overflow: "hidden", borderRadius: 12, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface, paddingBottom: 14 },
-  art: { aspectRatio: 1.15, alignItems: "center", justifyContent: "center" },
-  train: { backgroundColor: "#26212B" },
-  house: { backgroundColor: "#252823" },
+  art: { aspectRatio: 1.15 },
+  cover: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", resizeMode: "cover" },
   futureTitle: { fontFamily: fonts.display, fontSize: 16, lineHeight: 21, color: colors.text, paddingHorizontal: 12, marginTop: 12 },
   coming: { fontFamily: fonts.body, fontSize: 9, letterSpacing: 1.2, color: colors.muted, paddingHorizontal: 12, marginTop: 6 },
 });
