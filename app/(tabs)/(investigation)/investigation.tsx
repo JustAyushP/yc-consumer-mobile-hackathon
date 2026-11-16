@@ -1,10 +1,12 @@
 import { router } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 import { Action, Card, Copy, Heading, Notice, Page, Section, ui, ViewerRead } from "@/components/companion";
+import { TelegramButton } from "@/components/telegram-button";
 import { colors, fonts } from "@/components/ui/theme";
 
 export default function Investigation() {
   return <Page label="THE INVESTIGATION"><Heading>Follow the threads.</Heading><Copy muted>Your team’s case, in one place.</Copy>
+    <TelegramButton />
     <ViewerRead query="team">{team => <>
       <Section title="Case progress"><Card><View style={styles.stats}><View style={ui.grow}><Text style={ui.small}>Current day</Text><Text style={styles.value}>{team.day}</Text></View><View style={ui.grow}><Text style={ui.small}>Deductions connected</Text><Text style={styles.value}>{team.progress}%</Text></View></View>
         <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: team.progress }} accessibilityLabel="Case deduction progress" style={styles.track}><View style={[styles.fill, { width: `${Math.max(0, Math.min(100, team.progress))}%` }]} /></View>
