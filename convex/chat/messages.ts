@@ -55,8 +55,8 @@ export const sharedMemory = internalQuery({
   returns: v.string(),
   handler: async (ctx, { playerId, messageId }) => {
     const rows = (await ctx.db.query("messages").withIndex("by_player_agent", (q) => q.eq("playerId", playerId)).collect())
-      .filter((m) => m._id !== messageId && m.kind === "chat" && m.source === "keiki" && m.lineId)
-      .sort((a, b) => a._creationTime - b._creationTime).slice(-15);
+      .filter((m) => m._id !== messageId && m.kind === "chat" && (m.source === "keiki" || m.source === "ravo") && m.lineId)
+      .sort((a, b) => a._creationTime - b._creationTime).slice(-20);
     if (!rows.length) return "";
     const names: Record<string, string> = { "1": "Sal" };
     for (const lineId of ["2", "3"]) {
@@ -64,7 +64,7 @@ export const sharedMemory = internalQuery({
       const suspect = cast && (await ctx.db.query("suspects").collect()).find((s) => s.key === cast.agentKey);
       names[lineId] = suspect?.name ?? `line ${lineId}`;
     }
-    return ["Shared memory (the detective's recent messages to every character, oldest first; you know these as gossip travels the lounge, treat them as things the detective said, not as evidence):",
-      ...rows.map((m) => `- to ${names[m.lineId!]}: "${m.body.slice(0, 300)}"`)].join("\n");
+    return ["Shared memory (recent conversation between the detective and every character, oldest first; you know it as gossip travels the lounge, treat it as things people said, not as evidence):",
+      ...rows.map((m) => m.source === "ravo" ? `- ${names[m.lineId!]} to the detective: "${m.body.slice(0, 300)}"` : `- detective to ${names[m.lineId!]}: "${m.body.slice(0, 300)}"`)].join("\n");
   },
 });

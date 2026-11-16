@@ -6,6 +6,7 @@ import { colors, fonts } from "@/components/ui/theme";
 
 export default function Investigation() {
   return <Page label="THE INVESTIGATION"><Heading>Follow the threads.</Heading><Copy muted>Your team’s case, in one place.</Copy>
+    <Action title="Talk to the characters" subtitle="Chat with Sal and your two suspects in the app" onPress={() => router.push("/chat")} />
     <TelegramButton />
     <ViewerRead query="team">{team => <>
       <Section title="Case progress"><Card><View style={styles.stats}><View style={ui.grow}><Text style={ui.small}>Current day</Text><Text style={styles.value}>{team.day}</Text></View><View style={ui.grow}><Text style={ui.small}>Deductions connected</Text><Text style={styles.value}>{team.progress}%</Text></View></View>
