@@ -21,6 +21,9 @@ http.route({
     lineId: process.env.KEIKI_DEMO_LINE_ID,
     telegramBotId: process.env.KEIKI_DEMO_TELEGRAM_BOT_ID,
     diagnosticToolKeyReference: process.env.KEIKI_DIAGNOSTIC_TOOL_KEY_REFERENCE,
+    allowUnauthenticatedDemo: process.env.KEIKI_DEMO_ALLOW_UNAUTHENTICATED,
+    authBypassExpiresAt: process.env.KEIKI_DEMO_AUTH_BYPASS_EXPIRES_AT,
+    siteUrl: process.env.CONVEX_SITE_URL,
   }, {
     claim: (args) => ctx.runMutation(internal.chat.keikiIngress.claim, args),
     consult: (args) => ctx.runAction(internal.ravo.consult.consult, args),

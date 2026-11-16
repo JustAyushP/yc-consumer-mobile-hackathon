@@ -68,6 +68,150 @@ async function setup(realAuthorization = false) {
   return { t, ...ids, deps, consult, authorize, complete, send, state };
 }
 
+describe("temporary isolated credential bypass with the existing consult flow", () => {
+  const siteUrl = "https://bold-manatee-521.convex.site";
+  const bypassConfig = (): DemoConfig => ({ ...config, siteUrl, allowUnauthenticatedDemo: "true", authBypassExpiresAt: String(Date.now() + 60_000) });
+  const bypassRequest = (body: unknown = payload, key: string | null = null, query = toolQuery, origin = siteUrl) => {
+    const req = request(body, { "X-Orchid-Api-Key": key }, query);
+    return new Request(`${origin}/keiki/consult${query}`, { method: "POST", headers: req.headers, body: JSON.stringify(body) });
+  };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([null, "incorrect-key"])("runs real claim and completion with missing/wrong key %s, not a canned response", async (key) => {
+    const { send, state, consult, complete, authorize, playerId, groupId } = await setup();
+    const cfg = bypassConfig();
+    const response = await send(bypassRequest(payload, key), cfg);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ character: { agentKey: "common", name: "Fixture actor" }, guidance: `Private fixture for ${playerId}` });
+    expect(consult).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ groupId, playerId, agentKey: "common", lineId: "1" }));
+    expect(consult.mock.calls[0][0]).not.toHaveProperty("answerId");
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(authorize).toHaveBeenCalledTimes(1);
+    const saved = await state();
+    expect(saved.messages).toHaveLength(1);
+    expect(saved.messages[0].body).toBe(payload.input.playerMessage);
+    expect(saved.receipts).toHaveLength(1);
+    expect(saved.receipts[0].status).toBe("completed");
+    expect(saved.scheduled).toHaveLength(0);
+    expect((await send(bypassRequest(payload, key), cfg)).status).toBe(409);
+    expect(consult).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, "", "false", "TRUE"])("does not bypass without the exact opt-in: %s", async (allowUnauthenticatedDemo) => {
+    const { send, state, consult } = await setup();
+    expect((await send(bypassRequest(), { ...bypassConfig(), allowUnauthenticatedDemo })).status).toBe(401);
+    expect((await state()).messages).toHaveLength(0);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "", "not-a-time", "0", "9999999999999", `${Date.now()}\n`])("does not bypass with missing or invalid expiry: %s", async (authBypassExpiresAt) => {
+    const { send, consult } = await setup();
+    expect((await send(bypassRequest(), { ...bypassConfig(), authBypassExpiresAt })).status).toBe(401);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it("enforces expiry at every request even when the flag stays enabled", async () => {
+    const { send, consult } = await setup();
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    const cfg = { ...bypassConfig(), authBypassExpiresAt: String(now + 1000) };
+    expect((await send(bypassRequest({}), cfg)).status).toBe(400);
+    clock.mockReturnValue(now + 1000);
+    expect((await send(bypassRequest({}), cfg)).status).toBe(401);
+    clock.mockReturnValue(now + 2000);
+    expect((await send(bypassRequest({}), cfg)).status).toBe(401);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it("rejects a bypass window more than five minutes away", async () => {
+    const { send, consult } = await setup();
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    expect((await send(bypassRequest(), { ...bypassConfig(), authBypassExpiresAt: String(now + 300_001) })).status).toBe(401);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "https://bright-guineapig-371.convex.site", "https://bold-manatee-521.convex.site.attacker.test", "http://bold-manatee-521.convex.site"])("cannot bypass on another deployment: %s", async (siteUrl) => {
+    const { send, consult } = await setup();
+    expect((await send(bypassRequest(), { ...bypassConfig(), siteUrl })).status).toBe(401);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it("checks the actual request origin as well as the reserved server target", async () => {
+    const { send, consult } = await setup();
+    expect((await send(bypassRequest(payload, null, toolQuery, "https://example.test"), bypassConfig())).status).toBe(401);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it.each(["apiKey", "agentId", "lineId", "telegramBotId"] as const)("preserves required configuration: %s", async (key) => {
+    const { send, consult } = await setup();
+    expect((await send(bypassRequest(), { ...bypassConfig(), [key]: undefined })).status).toBe(503);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it("preserves validation, binding denial and internal-turn exclusion", async () => {
+    const { send, state, consult } = await setup();
+    const cfg = bypassConfig();
+    expect((await send(bypassRequest(payload, null, "?lineId=2&botId=1000000001"), cfg)).status).toBe(400);
+    expect((await send(bypassRequest({ ...payload, input: { ...payload.input, playerId: "another-player" } }), cfg)).status).toBe(400);
+    expect((await send(bypassRequest({ ...payload, context: { ...payload.context, channel: "slack" } }), cfg)).status).toBe(400);
+    expect((await send(bypassRequest({ ...payload, context: { ...payload.context, phone: "unbound-sender" } }), cfg)).status).toBe(403);
+    const internalRequest = bypassRequest();
+    internalRequest.headers.set("X-Orchid-Internal", "true");
+    expect((await send(internalRequest, cfg)).status).toBe(403);
+    expect((await state()).messages).toHaveLength(0);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it("still reauthorizes the real directive and suppresses denied output", async () => {
+    const { send, state, authorize, consult } = await setup();
+    authorize.mockResolvedValue({ authorized: false });
+    const response = await send(bypassRequest(), bypassConfig());
+    expect(response.status).toBe(503);
+    expect(await response.text()).not.toContain("Private fixture");
+    expect(consult).toHaveBeenCalledTimes(1);
+    expect(authorize).toHaveBeenCalledTimes(1);
+    expect((await state()).receipts[0].status).toBe("uncertain");
+  });
+
+  it("leaves normal valid-key authentication working on other targets", async () => {
+    const { send, consult } = await setup();
+    expect((await send(request(), { ...bypassConfig(), siteUrl: "https://another.convex.site" })).status).toBe(200);
+    expect(consult).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not bypass the overall disabled-ingress gate", async () => {
+    const { send, consult } = await setup();
+    expect((await send(bypassRequest(), { ...bypassConfig(), enabled: "false" })).status).toBe(503);
+    expect(consult).not.toHaveBeenCalled();
+  });
+
+  it("runs the actual scripted Brain consult and directive authorization without a credential", async () => {
+    const { t, deps, send, state } = await setup(true);
+    deps.consult = (args) => t.action(internal.ravo.consult.consult, args);
+    const cfg = bypassConfig();
+    const response = await send(bypassRequest(), cfg);
+    expect(response.status).toBe(200);
+    const directive = await response.json();
+    expect(directive.character.agentKey).toBe("common");
+    expect(directive.guidance).toContain("Scripted guidance (no live model)");
+    const saved = await state();
+    expect(saved.receipts[0].status).toBe("completed");
+    expect(JSON.parse(saved.receipts[0].directiveJson!)).toEqual(directive);
+    const effects = await t.run(async (ctx) => ({
+      events: await ctx.db.query("storyEvents").collect(),
+      answers: await ctx.db.query("answers").collect(),
+      commands: await ctx.db.query("commandReceipts").collect(),
+    }));
+    expect(effects.events).toHaveLength(1);
+    expect(effects.events[0].messageId).toBe(saved.messages[0]._id);
+    expect(effects.answers).toHaveLength(0);
+    expect(effects.commands).toHaveLength(0);
+    expect((await send(bypassRequest(), cfg)).status).toBe(409);
+  });
+});
+
 describe("optional rejected-key reference diagnostic with offline fixtures", () => {
   const reference = "00000000-0000-4000-8000-000000000001";
 

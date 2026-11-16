@@ -41,6 +41,9 @@ export type DemoConfig = {
   lineId?: string;
   telegramBotId?: string;
   diagnosticToolKeyReference?: string;
+  allowUnauthenticatedDemo?: string;
+  authBypassExpiresAt?: string;
+  siteUrl?: string;
 };
 
 function json(value: unknown, status: number) {
@@ -84,7 +87,12 @@ export async function handleConsult(request: Request, config: DemoConfig, deps: 
     return json({ error: "Keiki demo ingress is disabled or unconfigured" }, 503);
   }
   const key = request.headers.get("X-Orchid-Api-Key");
-  if (!key || !(await constantTimeEqual(key, config.apiKey))) {
+  const now = Date.now();
+  const expiresAt = Number(config.authBypassExpiresAt);
+  const bypass = config.allowUnauthenticatedDemo === "true" && config.siteUrl === "https://bold-manatee-521.convex.site" &&
+    new URL(request.url).origin === config.siteUrl && /^\d{13}$/.test(config.authBypassExpiresAt ?? "") &&
+    expiresAt > now && expiresAt - now <= 300_000;
+  if (!bypass && (!key || !(await constantTimeEqual(key, config.apiKey)))) {
     const present = Object.fromEntries(
       ["x-orchid-api-key", "x-orchid-trace-id", "x-orchid-internal", "authorization", "x-orchid-signature", "x-orchid-timestamp", "x-keiki-signature", "x-keiki-timestamp", "x-signature", "x-hub-signature-256", "content-type"]
         .map((name) => [name, request.headers.has(name)]),
