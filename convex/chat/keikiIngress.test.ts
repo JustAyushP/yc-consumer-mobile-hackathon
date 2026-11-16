@@ -114,6 +114,22 @@ describe("demo ingress with fake hosted transport, fake master, and fake authori
     expect(consult).not.toHaveBeenCalled();
   });
 
+  it("logs only allowlisted auth-header presence booleans when rejecting", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send } = await setup();
+    const secretHeaders = { "X-Orchid-Api-Key": "fixture-tool-kez", "X-Orchid-Trace-Id": "trace-secret-value", Authorization: "Bearer secret-bearer", "X-Unlisted-Header": "unlisted-secret" };
+    expect((await send(request(payload, secretHeaders))).status).toBe(401);
+    expect((await send(request(payload, { "X-Orchid-Api-Key": null }))).status).toBe(401);
+    const lines = log.mock.calls.filter(([label]) => label === "keiki-consult-auth-rejected").map(([, body]) => String(body));
+    log.mockRestore();
+    expect(lines).toHaveLength(2);
+    const [padded, absent] = lines.map((line) => JSON.parse(line));
+    expect(padded).toMatchObject({ present: { "x-orchid-api-key": true, "x-orchid-trace-id": true, authorization: true, "x-orchid-signature": false }, keyLengthMatches: true });
+    expect(absent).toMatchObject({ present: { "x-orchid-api-key": false }, keyLengthMatches: false });
+    const everything = lines.join("\n");
+    for (const secret of ["fixture-tool-ke", "trace-secret-value", "secret-bearer", "unlisted", "fixture-user-one", "My exact question"]) expect(everything).not.toContain(secret);
+  });
+
   it.each([
     "",
     `?lineId=2&botId=${telegramBotId}`,
