@@ -46,9 +46,9 @@ async function entitlement(ctx: QueryCtx, event: { groupId: Id<"groups">; player
   }
   return JSON.stringify({ caseId: group.caseId, day: projectedDay(group), role: player.roleKey, fixture: fixture.contentJson,
     message: { body: message.body, agentKey: message.agentKey ?? null, answerId: message.answerId ?? null, intakeCaseId: message.intakeCaseId ?? null, intakeDay: message.intakeDay ?? null },
-    graph: instance.graph, route: instance.route ?? null, state: { version: state.version, act: state.act, flags: state.flags, doneBeats: state.doneBeats },
+    graph: instance.graph, route: instance.route ?? null, state: { act: state.act, flags: state.flags, doneBeats: state.doneBeats },
     recipient: { agentKey: recipient.agentKey, contentRevision: recipient.contentRevision, authorizedFacts: recipient.authorizedFacts, pendingAgentKey: recipient.pendingAgentKey ?? null },
-    progress: progress.map((p) => p.insightKey).sort(), unlocks: unlocks.map((u) => u.clueKey).sort(), decisions,
+    progress: progress.map((p) => p.insightKey).sort(), unlocks: unlocks.map((u) => u.clueKey).sort(), decisions: decisions.map((decision) => ({ id: decision._id, key: decision.key, deadline: decision.deadline, resolvedOption: decision.resolvedOption ?? null, eligible: decision.electorate.includes(player._id), voted: decision.votes.some((vote) => vote.playerId === player._id) })),
     openDecisions: decisions.filter((decision) => !decision.resolvedOption && decision.deadline > Date.now() + (group.gameTimeOffsetMs ?? 0)).map((decision) => decision._id), question });
 }
 

@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { makeFunctionReference } from "convex/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, MutationCtx, QueryCtx } from "../_generated/server";
 import { assignImpl, COMMON_CHARACTER } from "../ravo/casts";
@@ -12,6 +13,8 @@ import { currentGroup, projectedDay, unlockClueImpl } from "./engine";
 import { authorizeIntegratedReplay, processIntegratedTurn } from "./integration/runtime";
 import { consumeDailyTurn, dailyStatus } from "./integration/daily";
 
+const replayCommand = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; lineId: "1" | "2" | "3"; caseId: Id<"cases">; day: number; command: Doc<"commandReceipts">["command"] }, unknown>("game/commands/dispatch:dispatch");
+
 export async function authorizedReplay(ctx: QueryCtx, event: Doc<"storyEvents">) {
   const group = await ctx.db.get(event.groupId);
   const player = await ctx.db.get(event.playerId);
@@ -24,7 +27,7 @@ export async function authorizedReplay(ctx: QueryCtx, event: Doc<"storyEvents">)
   if (today !== group.day) return null;
   const daily = await dailyStatus(ctx, group, event.playerId);
   if (event.dailyClosureDay !== undefined) return daily.closed && event.dailyClosureDay === group.day && directive.character.agentKey === "common" ? directive : null;
-  if (daily.closed && !(event.dailyTurnDay === group.day && event.dailyTurn === daily.limit && event.dailyTurnLimit === daily.limit && !await ctx.db.query("sessions").withIndex("by_player_day", (q) => q.eq("playerId", event.playerId).eq("day", group.day)).filter((q) => q.eq(q.field("completed"), true)).first())) return null;
+  if (daily.closed && (daily.completed || event.dailyTurnDay !== group.day || event.dailyTurn === undefined || event.dailyTurn > daily.limit || event.dailyTurnLimit !== daily.limit)) return null;
   if (message.agentKey !== undefined && message.agentKey !== directive.character.agentKey) return null;
   if (event.integrationJson !== undefined) return await authorizeIntegratedReplay(ctx, event) ? directive : null;
   if (event.lineId !== "1") {
@@ -132,19 +135,22 @@ export const processConsult = internalMutation({
     if (args.answerId && await ctx.db.query("storyEvents").withIndex("by_answer", (q) => q.eq("answerId", args.answerId)).first()) throw new Error("Answer already processed");
     group = await currentGroup(ctx, group);
     const daily = await dailyStatus(ctx, group, playerId);
-    if (daily.closed) {
+    const receipt = await ctx.db.query("commandReceipts").withIndex("by_message", (q) => q.eq("messageId", args.messageId)).unique();
+    const countedCommand = receipt && receipt.groupId === group._id && receipt.playerId === playerId && receipt.caseId === group.caseId && receipt.day === group.day && receipt.lineId === args.lineId && receipt.dailyTurn !== undefined && receipt.dailyTurnLimit !== undefined &&
+      (receipt.result.kind === "answer" || receipt.result.kind === "ability" || receipt.result.kind === "accusation" || (receipt.result.kind === "hint" && receipt.result.value));
+    const answer = args.answerId && await ctx.db.get(args.answerId);
+    const countedAnswer = answer && answer.groupId === group._id && answer.playerId === playerId && answer.day === group.day && answer.dailyTurnCharged && answer.dailyTurn !== undefined && answer.dailyTurnLimit !== undefined;
+    const previousAdmission = countedCommand ? { turn: receipt.dailyTurn!, limit: receipt.dailyTurnLimit! } : countedAnswer ? { turn: answer.dailyTurn!, limit: answer.dailyTurnLimit! } : undefined;
+    const finalAdmittedTurn = previousAdmission && !daily.completed && previousAdmission.turn === daily.limit && previousAdmission.turn === daily.counter?.turns && previousAdmission.limit === daily.limit;
+    if (daily.closed && !finalAdmittedTurn) {
       const next = group.dayOpenedAt === undefined ? "the next game day" : new Date(group.dayOpenedAt + 86400000 - (group.gameTimeOffsetMs ?? 0)).toISOString();
       const directive = { character: COMMON_CHARACTER, guidance: `Your session is complete. Return tomorrow. Next unlock: ${next}.`, tone: "noir", endTurn: true };
       await ctx.db.insert("storyEvents", { groupId: group._id, caseId: group.caseId, playerId, messageId: args.messageId, lineId: args.lineId, answerId: args.answerId,
         sheetJson: "null", contentJson: "{}", clueKeys: [], insightKeys: [], directiveJson: JSON.stringify(directive), dailyClosureDay: group.day });
       return directive;
     }
-    const receipt = await ctx.db.query("commandReceipts").withIndex("by_message", (q) => q.eq("messageId", args.messageId)).unique();
-    const countedCommand = receipt && receipt.groupId === group._id && receipt.playerId === playerId && receipt.caseId === group.caseId && receipt.day === group.day && receipt.lineId === args.lineId &&
-      (receipt.result.kind === "answer" || receipt.result.kind === "ability" || receipt.result.kind === "accusation" || (receipt.result.kind === "hint" && receipt.result.value));
-    const answer = args.answerId && await ctx.db.get(args.answerId);
-    const countedAnswer = answer && answer.groupId === group._id && answer.playerId === playerId && answer.day === group.day && answer.dailyTurnCharged;
-    const admitted = countedCommand || countedAnswer ? undefined : await consumeDailyTurn(ctx, group, playerId);
+    if (countedCommand) await ctx.runMutation(replayCommand, { groupId: group._id, playerId, messageId: args.messageId, lineId: receipt.lineId, caseId: group.caseId, day: group.day, command: receipt.command });
+    const admitted = previousAdmission ?? await consumeDailyTurn(ctx, group, playerId);
     const caseRecord = await ctx.db.get(group.caseId);
     if (!caseRecord) throw new Error("Invalid case");
     const fixture = await ctx.db.query("brainFixtures").withIndex("by_group", (q) => q.eq("groupId", group!._id)).unique();

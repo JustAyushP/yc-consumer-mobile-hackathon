@@ -146,6 +146,8 @@ export default defineSchema({
     score: v.optional(v.number()),
     verdict: v.optional(v.string()),
     dailyTurnCharged: v.optional(v.boolean()),
+    dailyTurn: v.optional(v.number()),
+    dailyTurnLimit: v.optional(v.number()),
   })
     .index("by_player_day", ["playerId", "day"])
     .index("by_group", ["groupId"]),
@@ -238,6 +240,7 @@ export default defineSchema({
   commandReceipts: defineTable({
     messageId: v.id("messages"), groupId: v.id("groups"), caseId: v.id("cases"), playerId: v.id("players"),
     lineId: v.union(v.literal("1"), v.literal("2"), v.literal("3")), day: v.number(),
+    dailyTurn: v.optional(v.number()), dailyTurnLimit: v.optional(v.number()),
     command: v.union(
       v.object({ kind: v.literal("survey"), answers: v.array(v.object({ questionKey: v.string(), optionIndex: v.number() })) }),
       v.object({ kind: v.literal("answer"), questionKey: v.string(), text: v.string() }),

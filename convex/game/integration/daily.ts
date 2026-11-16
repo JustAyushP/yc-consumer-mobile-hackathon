@@ -11,7 +11,8 @@ export async function dailyStatus(ctx: QueryCtx, group: Doc<"groups">, playerId:
     ctx.db.query("sessions").withIndex("by_player_day", (q) => q.eq("playerId", playerId).eq("day", group.day)).collect(),
   ]);
   if ((counter && (counter.groupId !== group._id || counter.caseId !== group.caseId)) || sessions.some((session) => session.groupId !== group._id)) throw new Error("Invalid daily session");
-  return { counter, closed: (counter?.turns ?? 0) >= limit || sessions.some((session) => session.completed), limit };
+  const completed = sessions.some((session) => session.completed);
+  return { counter, completed, closed: (counter?.turns ?? 0) >= limit || completed, limit };
 }
 
 export async function consumeDailyTurn(ctx: MutationCtx, group: Doc<"groups">, playerId: Id<"players">) {

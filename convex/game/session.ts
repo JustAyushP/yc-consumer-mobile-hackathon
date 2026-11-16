@@ -50,9 +50,9 @@ export const submitAnswer = internalMutation({
       (a) => a.questionKey === questionKey,
     );
     if (prior) return prior._id;
-    await consumeDailyTurn(ctx, group, playerId);
+    const daily = await consumeDailyTurn(ctx, group, playerId);
     const session = await ensureSession(ctx, group, player);
-    const answerId = await ctx.db.insert("answers", { groupId: group._id, playerId, day: group.day, questionKey, text: text.trim(), dailyTurnCharged: true });
+    const answerId = await ctx.db.insert("answers", { groupId: group._id, playerId, day: group.day, questionKey, text: text.trim(), dailyTurnCharged: true, dailyTurn: daily.turn, dailyTurnLimit: daily.limit });
     const required = questions.filter((question) => question.requiredForSession);
     if (required.length && required.every((question) => question.key === questionKey || (priorAnswers.some((answer) => answer.questionKey === question.key)))) {
       await ctx.db.patch(session._id, { completed: true, status: "completed" });

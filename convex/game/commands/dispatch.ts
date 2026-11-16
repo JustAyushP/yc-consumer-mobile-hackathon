@@ -8,6 +8,7 @@ import { ROLES, SURVEY } from "../catalog";
 import { projectedDay } from "../engine";
 import { weekOf } from "../lib";
 import { reviewedHintsForCase, selectReviewedHint } from "./reviewedHints";
+import { dailyStatus } from "../integration/daily";
 
 const command = v.union(
   v.object({ kind: v.literal("survey"), answers: v.array(v.object({ questionKey: v.string(), optionIndex: v.number() })) }),
@@ -156,7 +157,10 @@ export const dispatch = internalMutation({
         break;
       }
     }
-    await ctx.db.insert("commandReceipts", { groupId: group._id, caseId: group.caseId, playerId: player._id, messageId: message._id, lineId: args.lineId, day: args.day, command: args.command, result: value });
+    const charged = value.kind !== "survey" && (value.kind !== "hint" || value.value);
+    const daily = charged ? await dailyStatus(ctx, group, player._id) : null;
+    await ctx.db.insert("commandReceipts", { groupId: group._id, caseId: group.caseId, playerId: player._id, messageId: message._id, lineId: args.lineId, day: args.day, command: args.command, result: value,
+      dailyTurn: daily?.counter?.turns, dailyTurnLimit: daily?.limit });
     return value;
   },
 });

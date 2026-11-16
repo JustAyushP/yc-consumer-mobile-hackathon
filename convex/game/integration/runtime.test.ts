@@ -175,6 +175,12 @@ it("caps concurrent turns, allows exact closure replay, gates direct effects and
   expect(closed[0].directive.guidance).toContain("Return tomorrow");
   expect(closed[0].directive.nextQuestion).toBeUndefined();
   expect(await t.action(internal.ravo.consult.consult, { groupId, playerId: player, messageId: closed[0].messageId, lineId: "1" })).toEqual(closed[0].directive);
+  const events = await t.run(async (ctx) => ctx.db.query("storyEvents").collect());
+  const firstAdmitted = events.find((event) => event.dailyTurn === 1)!;
+  const lastAdmitted = events.find((event) => event.dailyTurn === 2)!;
+  expect(await t.query(internal.ravo.consult.authorizeCachedDirective, { groupId, playerId: player, messageId: firstAdmitted.messageId, lineId: "1", agentKey: "common", directiveJson: firstAdmitted.directiveJson })).toEqual({ authorized: true });
+  expect(await t.query(internal.ravo.consult.authorizeCachedDirective, { groupId, playerId: player, messageId: lastAdmitted.messageId, lineId: "1", agentKey: "common", directiveJson: lastAdmitted.directiveJson })).toEqual({ authorized: true });
+  expect(await t.query(internal.ravo.consult.authorizeCachedDirective, { groupId, playerId: player, messageId: closed[0].messageId, lineId: "1", agentKey: "common", directiveJson: JSON.stringify(closed[0].directive) })).toEqual({ authorized: true });
   expect((await t.run(async (ctx) => ctx.db.query("brainDailyTurns").withIndex("by_player_day", (q) => q.eq("playerId", player).eq("day", 1)).unique()))?.turns).toBe(2);
   await expect(t.mutation(internal.game.session.submitAnswer, { playerId: player, questionKey: "q1", text: "proof" })).rejects.toThrow("Daily session complete");
   await expect(t.mutation(internal.game.session.useAbility, { playerId: player, targetKey: "a" })).rejects.toThrow("Daily session complete");
@@ -192,6 +198,21 @@ it("caps concurrent turns, allows exact closure replay, gates direct effects and
   await t.mutation(internal.game.engine.fastForwardDay, { groupId });
   expect((await turn(t, groupId, player)).directive.endTurn).toBe(false);
   await expect(t.action(internal.ravo.consult.consult, { groupId, playerId: player, messageId: closed[0].messageId, lineId: "1" })).rejects.toThrow();
+});
+
+it("finishes an already-admitted last command without charging it twice", async () => {
+  vi.useFakeTimers();
+  const { t, groupId, player } = await setup();
+  await t.run(async (ctx) => ctx.db.patch(groupId, { dailyTurnLimit: 1 }));
+  const command = await t.mutation(claimAndDispatchFixture, { groupId, playerId: player, lineId: "1", body: "answer", command: { kind: "answer", questionKey: "q1", text: "proof" } });
+  const answerId = (command.result as { kind: "answer"; value: Id<"answers"> }).value;
+  const args = { groupId, playerId: player, messageId: command.messageId, lineId: "1", answerId };
+  const result = await t.action(internal.ravo.consult.consult, args);
+  expect(result.endTurn).toBe(false);
+  expect(result.progressDelta).toBe(100);
+  expect(await t.action(internal.ravo.consult.consult, args)).toEqual(result);
+  expect((await t.run(async (ctx) => ctx.db.query("brainDailyTurns").first()))?.turns).toBe(1);
+  expect((await turn(t, groupId, player)).directive.guidance).toContain("Return tomorrow");
 });
 
 it("automatically closes only explicitly required authored tasks and preserves answer replay", async () => {
