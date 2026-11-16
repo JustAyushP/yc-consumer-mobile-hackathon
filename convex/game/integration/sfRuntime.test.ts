@@ -130,6 +130,11 @@ it("runs the isolated SF case through seven flexible segments with three private
   expect(await t.query(solved, { groupId, playerId: players[0], messageId: accusationMessage, lineId: "1" })).toEqual({ correct: true, reveal: SF_CASE_CANDIDATE.reveal });
   expect(await t.query(solved, { groupId, playerId: players[1], messageId: accusationMessage, lineId: "1" })).toBeNull();
   expect((await t.query(api.game.viewer.reveal, { viewerToken: "sf-2" }))?.story).toEqual(SF_CASE_CANDIDATE.reveal);
+  const segment = await t.run(async (ctx) => (await ctx.db.query("brainSegments").first())!);
+  await t.run(async (ctx) => ctx.db.patch(segment._id, { index: 6, completed: true }));
+  expect(await t.query(solved, { groupId, playerId: players[0], messageId: accusationMessage, lineId: "1" })).toBeNull();
+  expect(await t.query(api.game.viewer.reveal, { viewerToken: "sf-2" })).toBeNull();
+  expect(JSON.stringify(await t.query(api.game.viewer.story, { viewerToken: "sf-2" }))).not.toContain(SF_CASE_CANDIDATE.reveal[0]);
 });
 
 it("withholds future segment evidence and rejects a changed SF revision", async () => {
