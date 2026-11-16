@@ -150,11 +150,19 @@ export async function processIntegratedTurn(ctx: MutationCtx, args: {
   const questions = await ctx.db.query("questions").withIndex("by_case_day", (q) => q.eq("caseId", group.caseId).eq("day", group.day)).collect();
   const answers = await ctx.db.query("answers").withIndex("by_player_day", (q) => q.eq("playerId", player._id).eq("day", group.day)).collect();
   const eligibleQuestions = questions.filter((q) => (!segment || segment.active?.questionKeys.includes(q.key)) && !answers.some((answer) => answer.questionKey === q.key));
+  const sfQuestion = content.characters.revision === SF_CONTENT_REVISION && lineId === "1" && player.roleKey && segment?.active
+    ? eligibleQuestions.slice().sort((a, b) => a.key.localeCompare(b.key))[0]
+    : undefined;
   const plan = segment?.index === 7 && segment.completed ? null : planPacing(pacingSnapshot, prior ?? initialPacingState(pacingSnapshot), content.pacing, { id: args.messageId, playerId: player._id, eligibleQuestions });
-  if (plan && pacingRow) await ctx.db.patch(pacingRow._id, { stateJson: JSON.stringify(plan.nextState) });
-  else if (plan) await ctx.db.insert("brainPacing", { groupId: group._id, stateJson: JSON.stringify(plan.nextState) });
+  const suppressedQuestion = content.characters.revision === SF_CONTENT_REVISION && !sfQuestion && plan?.plan?.intervention.kind === "question";
+  if (plan && !suppressedQuestion && pacingRow) await ctx.db.patch(pacingRow._id, { stateJson: JSON.stringify(plan.nextState) });
+  else if (plan && !suppressedQuestion) await ctx.db.insert("brainPacing", { groupId: group._id, stateJson: JSON.stringify(plan.nextState) });
   let questionKey: string | undefined;
-  if (plan?.plan?.intervention.kind === "question") {
+  if (sfQuestion) {
+    questionKey = sfQuestion.key;
+    directive.nextQuestion = `${sfQuestion.key}: ${sfQuestion.prompt}`;
+  }
+  if (content.characters.revision !== SF_CONTENT_REVISION && plan?.plan?.intervention.kind === "question") {
     questionKey = plan.plan.intervention.questionKey;
     directive.nextQuestion = eligibleQuestions.find((item) => item.key === questionKey)?.prompt;
   } else if (plan?.plan?.intervention.kind === "nudge") {
