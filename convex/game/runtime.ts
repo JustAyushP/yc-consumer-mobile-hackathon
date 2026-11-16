@@ -15,6 +15,13 @@ import { consumeDailyTurn, dailyStatus } from "./integration/daily";
 
 const replayCommand = makeFunctionReference<"mutation", { groupId: Id<"groups">; playerId: Id<"players">; messageId: Id<"messages">; lineId: "1" | "2" | "3"; caseId: Id<"cases">; day: number; command: Doc<"commandReceipts">["command"] }, unknown>("game/commands/dispatch:dispatch");
 
+async function closureBinding(ctx: QueryCtx, message: Doc<"messages">, playerId: Id<"players">, lineId: string, expectedAgentKey?: string) {
+  const cast = lineId === "1" ? null : await ctx.db.query("casts").withIndex("by_player_line", (q) => q.eq("playerId", playerId).eq("lineId", lineId)).unique();
+  const agentKey = lineId === "1" ? COMMON_CHARACTER.agentKey : cast?.groupId === message.groupId ? cast.agentKey : undefined;
+  if (!agentKey || (expectedAgentKey !== undefined && expectedAgentKey !== agentKey) || (message.agentKey !== undefined && message.agentKey !== agentKey)) return null;
+  return JSON.stringify({ body: message.body, agentKey: message.agentKey ?? null, castAgentKey: agentKey, intakeCaseId: message.intakeCaseId ?? null, intakeDay: message.intakeDay ?? null });
+}
+
 export async function authorizedReplay(ctx: QueryCtx, event: Doc<"storyEvents">) {
   const group = await ctx.db.get(event.groupId);
   const player = await ctx.db.get(event.playerId);
@@ -26,7 +33,7 @@ export async function authorizedReplay(ctx: QueryCtx, event: Doc<"storyEvents">)
   const today = projectedDay(group);
   if (today !== group.day) return null;
   const daily = await dailyStatus(ctx, group, event.playerId);
-  if (event.dailyClosureDay !== undefined) return daily.closed && event.dailyClosureDay === group.day && directive.character.agentKey === "common" ? directive : null;
+  if (event.dailyClosureDay !== undefined) return daily.closed && event.dailyClosureDay === group.day && directive.character.agentKey === "common" && event.sheetJson === await closureBinding(ctx, message, event.playerId, event.lineId) ? directive : null;
   if (daily.closed && (daily.completed || event.dailyTurnDay !== group.day || event.dailyTurn === undefined || event.dailyTurn > daily.limit || event.dailyTurnLimit !== daily.limit)) return null;
   if (message.agentKey !== undefined && message.agentKey !== directive.character.agentKey) return null;
   if (event.integrationJson !== undefined) return await authorizeIntegratedReplay(ctx, event) ? directive : null;
@@ -143,10 +150,12 @@ export const processConsult = internalMutation({
     const previousAdmission = countedCommand ? { turn: receipt.dailyTurn!, limit: receipt.dailyTurnLimit! } : countedAnswer ? { turn: answer.dailyTurn!, limit: answer.dailyTurnLimit! } : undefined;
     const finalAdmittedTurn = previousAdmission && !daily.completed && previousAdmission.turn === daily.limit && previousAdmission.turn === daily.counter?.turns && previousAdmission.limit === daily.limit;
     if (daily.closed && !finalAdmittedTurn) {
+      const binding = await closureBinding(ctx, message, playerId, args.lineId, args.agentKey);
+      if (!binding) throw new Error("Invalid conversation");
       const next = group.dayOpenedAt === undefined ? "the next game day" : new Date(group.dayOpenedAt + 86400000 - (group.gameTimeOffsetMs ?? 0)).toISOString();
       const directive = { character: COMMON_CHARACTER, guidance: `Your session is complete. Return tomorrow. Next unlock: ${next}.`, tone: "noir", endTurn: true };
       await ctx.db.insert("storyEvents", { groupId: group._id, caseId: group.caseId, playerId, messageId: args.messageId, lineId: args.lineId, answerId: args.answerId,
-        sheetJson: "null", contentJson: "{}", clueKeys: [], insightKeys: [], directiveJson: JSON.stringify(directive), dailyClosureDay: group.day });
+        sheetJson: binding, contentJson: "{}", clueKeys: [], insightKeys: [], directiveJson: JSON.stringify(directive), dailyClosureDay: group.day });
       return directive;
     }
     if (countedCommand) await ctx.runMutation(replayCommand, { groupId: group._id, playerId, messageId: args.messageId, lineId: receipt.lineId, caseId: group.caseId, day: group.day, command: receipt.command });

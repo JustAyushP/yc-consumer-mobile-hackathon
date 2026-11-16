@@ -158,7 +158,9 @@ export const dispatch = internalMutation({
       }
     }
     const charged = value.kind !== "survey" && (value.kind !== "hint" || value.value);
-    const daily = charged ? await dailyStatus(ctx, group, player._id) : null;
+    const updatedGroup = await ctx.db.get(group._id);
+    if (!updatedGroup || updatedGroup.caseId !== group.caseId || updatedGroup.day !== args.day) throw new Error("Command context changed");
+    const daily = charged ? await dailyStatus(ctx, updatedGroup, player._id) : null;
     await ctx.db.insert("commandReceipts", { groupId: group._id, caseId: group.caseId, playerId: player._id, messageId: message._id, lineId: args.lineId, day: args.day, command: args.command, result: value,
       dailyTurn: daily?.counter?.turns, dailyTurnLimit: daily?.limit });
     return value;
